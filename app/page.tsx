@@ -1,5 +1,7 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
+import { fetchDVF, geocodeVille, type ProspectScore } from "./scoring-engine";
+const MapComponent = lazy(() => import("./map-component"));
 
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; };
 type Prospect = { id:number; nom:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; };
@@ -28,7 +30,11 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const [nav, setNav] = useState("dashboard");
   const [mandats, setMandats] = useState<Mandat[]>(MANDATS);
-  const [prospects] = useState<Prospect[]>(PROSPECTS);
+  const [prospects, setProspects] = useState<Prospect[]>(PROSPECTS);
+  const [dvfLoading, setDvfLoading] = useState(false);
+  const [dvfError, setDvfError] = useState("");
+  const [mapCenter, setMapCenter] = useState<[number,number]>([44.837, -0.579]);
+  const [selProspect, setSelProspect] = useState<Prospect|null>(null);
   const [acheteurs] = useState<Acheteur[]>(ACHETEURS);
   const [rdvs] = useState<RDV[]>([
     {id:1,titre:"Visite Villa des Acacias",client:"Thomas Lefebvre",tel:"06 11 22 33 44",date:"2026-05-14",heure:"10:00",duree:60,type:"visite",bien:"14 rue des Acacias"},
@@ -244,73 +250,110 @@ export default function App() {
 
         {/* PROSPECTION */}
         {nav==="prospects"&&(
-          <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.3s ease"}}>
-            <div style={{marginBottom:32}}>
-              <h1 style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em",marginBottom:6}}>Prospection</h1>
-              <p style={{color:C.muted,fontSize:15}}>Identifiez automatiquement les propriétaires prêts à vendre.</p>
-            </div>
-
-            {/* Step 1 */}
-            <div style={{...card(),padding:"24px",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-                <div style={{width:22,height:22,borderRadius:"50%",border:`1px solid ${C.border2}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:C.muted,flexShrink:0}}>1</div>
-                <div style={{fontSize:14,fontWeight:600,color:C.text}}>Secteur de prospection</div>
-              </div>
-              <div style={{display:"flex",gap:10}}>
-                <input value={prospSecteur} onChange={e=>setProspSecteur(e.target.value)} placeholder="Code postal ou commune..." style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 14px",fontSize:14,transition:"border-color 0.15s"}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                <button style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer"}}>Confirmer</button>
-              </div>
-            </div>
-
-            {/* Step 2 */}
-            <div style={{...card(),padding:"24px",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-                <div style={{width:22,height:22,borderRadius:"50%",border:`1px solid ${C.border2}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:C.muted,flexShrink:0}}>2</div>
-                <div style={{fontSize:14,fontWeight:600,color:C.text}}>Source de données</div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
-                {[{id:"dvf",t:"Transactions récentes",d:"Propriétaires ayant acheté il y a 7–12 ans. Source : DVF officiel.",c:C.green},{id:"dpe",t:"DPE récents",d:"Un DPE commandé signale une mise en vente prochaine. Source : ADEME.",c:C.amber},{id:"street",t:"Prospection terrain",d:"Street View IA analyse les boîtes aux lettres de votre secteur.",c:C.purple},{id:"veille",t:"Veille concurrence",d:"Biens déjà en vente — retrouvez le propriétaire via le cadastre.",c:C.blue}].map(m=>(
-                  <div key={m.id} onClick={()=>setProspMethod(prospMethod===m.id?"":m.id)} style={{padding:"16px",background:prospMethod===m.id?C.accentBg:C.surface,border:`1px solid ${prospMethod===m.id?C.border2:C.border}`,borderRadius:10,cursor:"pointer",transition:"all 0.2s"}}>
-                    <div style={{width:6,height:6,borderRadius:"50%",background:m.c,marginBottom:10}}/>
-                    <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:4}}>{m.t}</div>
-                    <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>{m.d}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Step 3 */}
-            {prospMethod&&(
-              <div style={{...card(),padding:"24px",marginBottom:28,animation:"fadeUp 0.2s ease"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-                  <div style={{width:22,height:22,borderRadius:"50%",border:`1px solid ${C.border2}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:C.muted,flexShrink:0}}>3</div>
-                  <div style={{fontSize:14,fontWeight:600,color:C.text}}>Lancer l'analyse</div>
+          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            {/* LEFT PANEL */}
+            <div style={{width:320,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",background:C.surface,flexShrink:0}}>
+              <div style={{padding:"20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>Prospection</div>
+                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Identifiez les propriétaires prêts à vendre</div>
+                {/* Search */}
+                <div style={{display:"flex",gap:8,marginBottom:12}}>
+                  <input value={prospSecteur} onChange={e=>setProspSecteur(e.target.value)} onKeyDown={async e=>{
+                    if(e.key!=="Enter"||!prospSecteur.trim()) return;
+                    setDvfLoading(true); setDvfError("");
+                    try {
+                      const geo = await geocodeVille(prospSecteur);
+                      if(!geo){setDvfError("Ville introuvable");setDvfLoading(false);return;}
+                      setMapCenter([geo.lat,geo.lng]);
+                      const results = await fetchDVF(geo.lat, geo.lng, 3000);
+                      if(!results.length){setDvfError("Aucun résultat DVF");setDvfLoading(false);return;}
+                      setProspects(prev=>{
+                        const existing = new Set(prev.map(p=>p.adresse));
+                        return [...prev,...results.filter(r=>!existing.has(r.adresse)).map(r=>({...r,id:Date.now()+Math.random()} as any))];
+                      });
+                    } catch(err:any){setDvfError(err.message||"Erreur API");}
+                    setDvfLoading(false);
+                  }} placeholder="Code postal ou commune..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <button disabled={dvfLoading||!prospSecteur} onClick={async()=>{
+                    if(!prospSecteur.trim()) return;
+                    setDvfLoading(true); setDvfError("");
+                    try {
+                      const geo = await geocodeVille(prospSecteur);
+                      if(!geo){setDvfError("Ville introuvable");setDvfLoading(false);return;}
+                      setMapCenter([geo.lat,geo.lng]);
+                      const results = await fetchDVF(geo.lat, geo.lng, 3000);
+                      setProspects(prev=>{
+                        const existing = new Set(prev.map(p=>p.adresse));
+                        return [...prev,...results.filter(r=>!existing.has(r.adresse)).map(r=>({...r} as any))];
+                      });
+                    } catch(err:any){setDvfError(err.message||"Erreur API");}
+                    setDvfLoading(false);
+                  }} style={{background:dvfLoading?C.border:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:500,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0}}>
+                    {dvfLoading?"...":"→"}
+                  </button>
                 </div>
-                <p style={{fontSize:13,color:C.muted,marginBottom:16}}>Votre agent IA va analyser le secteur, identifier les prospects et préparer les courriers personnalisés.</p>
-                <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse du secteur ${prospSecteur||"sélectionné"} lancée. J'identifie les prospects et prépare les courriers.`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"12px 20px",fontSize:14,fontWeight:500,cursor:"pointer",width:"100%"}}>
-                  Lancer l'analyse
-                </button>
+                {dvfError&&<div style={{fontSize:12,color:C.red,marginBottom:8}}>{dvfError}</div>}
+                {/* Method filters */}
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {[{id:"",l:"Tous"},{id:"DVF",l:"DVF"},{id:"DPE",l:"DPE"},{id:"StreetView",l:"Vision IA"}].map(f=>(
+                    <button key={f.id} onClick={()=>setProspMethod(f.id)} style={{padding:"4px 10px",background:prospMethod===f.id?C.accent:C.card,color:prospMethod===f.id?(dark?"#080808":"#FAFAFA"):C.muted,border:`1px solid ${prospMethod===f.id?C.accent:C.border}`,borderRadius:20,fontSize:11,fontWeight:prospMethod===f.id?600:400,cursor:"pointer",transition:"all 0.15s"}}>{f.l}</button>
+                  ))}
+                </div>
               </div>
-            )}
-
-            {/* Prospects */}
-            <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:14}}>{prospects.length} prospects identifiés</div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {prospects.map(p=>{
-                const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
-                return(
-                  <div key={p.id} style={{...card(),padding:"16px 20px",display:"flex",alignItems:"center",gap:16}}>
-                    <div style={{width:36,height:36,borderRadius:8,background:col+"15",border:`1px solid ${col}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:500,color:C.text,marginBottom:2}}>{p.adresse}</div>
-                      <div style={{fontSize:12,color:C.muted}}>{p.source} — {p.notes}</div>
-                    </div>
-                    <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Je rédige un courrier pour le propriétaire au ${p.adresse}.`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,color:C.text,cursor:"pointer",flexShrink:0,fontWeight:500}}>
-                      Courrier
-                    </button>
+              {/* Prospects list */}
+              <div style={{flex:1,overflowY:"auto"}}>
+                {prospects.filter(p=>!prospMethod||p.source===prospMethod).length===0?(
+                  <div style={{padding:20,textAlign:"center",color:C.muted}}>
+                    <div style={{fontSize:13,marginBottom:4}}>Aucun prospect</div>
+                    <div style={{fontSize:12}}>Tapez un code postal et appuyez sur Entrée</div>
                   </div>
-                );
-              })}
+                ):(
+                  prospects.filter(p=>!prospMethod||p.source===prospMethod).map(p=>{
+                    const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
+                    return(
+                      <div key={p.id} onClick={()=>setSelProspect(selProspect?.id===p.id?null:p)} style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:selProspect?.id===p.id?C.accentBg:"transparent",transition:"background 0.15s"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+                          <div style={{width:28,height:28,borderRadius:6,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
+                            <div style={{fontSize:11,color:C.muted}}>{p.ville}</div>
+                          </div>
+                        </div>
+                        <div style={{fontSize:11,color:C.muted,marginLeft:38}}>{p.notes}</div>
+                        {selProspect?.id===p.id&&(
+                          <div style={{marginTop:10,marginLeft:38,display:"flex",gap:6}}>
+                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Je rédige un courrier personnalisé pour le propriétaire au ${p.adresse}, ${p.ville}. Score de probabilité : ${p.score}/100. ${p.notes}`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Courrier</button>
+                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse complète du prospect au ${p.adresse} : score ${p.score}/100, acheté il y a ${(p as any).details?.anciennete_ans||"?"} ans. Quelle stratégie de contact recommandes-tu ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Analyser</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            {/* MAP */}
+            <div style={{flex:1,position:"relative"}}>
+              <Suspense fallback={<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:13}}>Chargement de la carte...</div>}>
+                <MapComponent
+                  prospects={prospects.filter(p=>!prospMethod||p.source===prospMethod).filter((p:any)=>p.lat&&p.lng) as any}
+                  onSelect={(p:any)=>setSelProspect(p)}
+                  center={mapCenter}
+                  zoom={13}
+                  dark={dark}
+                />
+              </Suspense>
+              {/* Map overlay stats */}
+              <div style={{position:"absolute",top:12,left:12,background:dark?"rgba(8,8,8,0.9)":"rgba(255,255,255,0.9)",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",backdropFilter:"blur(8px)",zIndex:10}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:2}}>Prospects identifiés</div>
+                <div style={{fontSize:20,fontWeight:700,color:C.text}}>{prospects.length}</div>
+              </div>
+              {dvfLoading&&(
+                <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:dark?"rgba(8,8,8,0.9)":"rgba(255,255,255,0.9)",border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 24px",backdropFilter:"blur(8px)",zIndex:20,textAlign:"center"}}>
+                  <div style={{fontSize:13,color:C.text,marginBottom:4}}>Analyse DVF en cours...</div>
+                  <div style={{fontSize:12,color:C.muted}}>Interrogation des données officielles</div>
+                </div>
+              )}
             </div>
           </div>
         )}
