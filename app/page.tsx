@@ -274,10 +274,7 @@ export default function App() {
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
-                      setProspects(prev=>{
-                        const existing = new Set(prev.map(p=>p.adresse));
-                        return [...prev,...data.prospects.filter((r:any)=>!existing.has(r.adresse))];
-                      });
+                      setProspects(data.prospects || []);
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
                   }} placeholder="Code postal ou commune..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
@@ -287,10 +284,7 @@ export default function App() {
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
-                      setProspects(prev=>{
-                        const existing = new Set(prev.map(p=>p.adresse));
-                        return [...prev,...data.prospects.filter((r:any)=>!existing.has(r.adresse))];
-                      });
+                      setProspects(data.prospects || []);
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
                   }} style={{background:dvfLoading?C.border:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:500,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0}}>
