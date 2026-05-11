@@ -312,7 +312,7 @@ export default function App() {
                       if(!results.length){setDvfError("Aucun résultat DVF");setDvfLoading(false);return;}
                       setProspects(prev=>{
                         const existing = new Set(prev.map(p=>p.adresse));
-                        return [...prev,...results.filter(r=>!existing.has(r.adresse)).map(r=>({...r,id:Date.now()+Math.random()} as any))];
+                        return [...prev,...results.filter((r:any)=>!existing.has(r.adresse)).map((r:any)=>({...r,id:Date.now()+Math.random()} as any))];
                       });
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
@@ -327,7 +327,7 @@ export default function App() {
                       const results = await fetchDVF(geo.lat, geo.lng);
                       setProspects(prev=>{
                         const existing = new Set(prev.map(p=>p.adresse));
-                        return [...prev,...results.filter(r=>!existing.has(r.adresse)).map(r=>({...r} as any))];
+                        return [...prev,...results.filter((r:any)=>!existing.has(r.adresse)).map((r:any)=>({...r} as any))];
                       });
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
