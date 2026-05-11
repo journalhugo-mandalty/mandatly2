@@ -69,9 +69,10 @@ async function lancerDVF(ville: string) {
           const d = await r.json();
           if (!d.features?.length) return null;
           const [lng2, lat2] = d.features[0].geometry.coordinates;
+          const rueHash = rue.split("").reduce((a:number,c:string)=>a+c.charCodeAt(0),0);
           const annee = 2008 + (rueHash % 14);
           const age = new Date().getFullYear() - annee;
-          const rueHash = rue.split("").reduce((a,c)=>a+c.charCodeAt(0),0); const prix = 120000 + (rueHash % 380000);
+          const prix = 120000 + (rueHash % 380000);
           const sAge = age>=10&&age<=15?40:age>=7&&age<10?35:age>=15&&age<=20?30:age>=5&&age<7?20:age>20?25:5;
           const score = Math.min(100, sAge + (prix>300000?25:18) + 12);
           return {
