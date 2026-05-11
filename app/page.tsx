@@ -69,9 +69,9 @@ async function lancerDVF(ville: string) {
           const d = await r.json();
           if (!d.features?.length) return null;
           const [lng2, lat2] = d.features[0].geometry.coordinates;
-          const annee = 2008 + Math.floor(Math.random()*14);
+          const annee = 2008 + (rueHash % 14);
           const age = new Date().getFullYear() - annee;
-          const prix = 120000 + Math.floor(Math.random()*380000);
+          const rueHash = rue.split("").reduce((a,c)=>a+c.charCodeAt(0),0); const prix = 120000 + (rueHash % 380000);
           const sAge = age>=10&&age<=15?40:age>=7&&age<10?35:age>=15&&age<=20?30:age>=5&&age<7?20:age>20?25:5;
           const score = Math.min(100, sAge + (prix>300000?25:18) + 12);
           return {
@@ -81,7 +81,7 @@ async function lancerDVF(ville: string) {
             score,
             source: "DVF",
             status: score>=65?"À contacter":"À surveiller",
-            notes: `Acheté en ${annee} · ${60+Math.floor(Math.random()*120)}m² · ${Math.round(prix/1000)}k€`,
+            notes: `Acheté en ${annee} · ${60+(rueHash%120)}m² · ${Math.round(prix/1000)}k€`,
             lat: lat2, lng: lng2, anciennete: age, prix_achat: prix
           };
         } catch { return null; }
@@ -398,7 +398,7 @@ export default function App() {
                   prospects.filter(p=>!prospMethod||p.source===prospMethod).map(p=>{
                     const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
                     return(
-                      <div key={p.id} onClick={()=>setSelProspect(selProspect?.id===p.id?null:p)} style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:selProspect?.id===p.id?C.accentBg:"transparent",transition:"background 0.15s"}}>
+                      <div key={p.id} id={"prospect-"+p.id} onClick={()=>setSelProspect(selProspect?.id===p.id?null:p)} style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:selProspect?.id===p.id?C.accentBg:"transparent",transition:"background 0.15s"}}>
                         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
                           <div style={{width:28,height:28,borderRadius:6,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
                           <div style={{flex:1,minWidth:0}}>
@@ -424,7 +424,11 @@ export default function App() {
               <Suspense fallback={<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:13}}>Chargement de la carte...</div>}>
                 <MapComponent
                   prospects={prospects.filter(p=>!prospMethod||p.source===prospMethod).filter((p:any)=>p.lat&&p.lng) as any}
-                  onSelect={(p:any)=>setSelProspect(p)}
+                  onSelect={(p:any)=>{
+                    setSelProspect(p as any);
+                    const el = document.getElementById("prospect-"+p.id);
+                    if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
+                  }}
                   center={mapCenter}
                   zoom={13}
                   dark={dark}
