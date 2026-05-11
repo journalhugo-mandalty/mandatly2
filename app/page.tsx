@@ -431,7 +431,6 @@ export default function App() {
                     if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
                   }}
                   center={mapCenter}
-                  zoom={13}
                   dark={dark}
                 />
               </Suspense>
