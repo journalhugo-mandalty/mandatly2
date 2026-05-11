@@ -44,7 +44,7 @@ async function lancerDVF(ville: string) {
         const sType = t.type_local==="Maison"?15:12;
         const score = Math.min(100, sAge+sPV+sType);
         return {
-          id: Math.random(),
+          id: (t.adresse_numero||"") + (t.adresse_nom_voie||"") + (t.date_mutation||""),
           adresse: `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim()||"Adresse inconnue",
           ville: t.nom_commune || nomVille,
           score,
@@ -75,7 +75,7 @@ async function lancerDVF(ville: string) {
           const sAge = age>=10&&age<=15?40:age>=7&&age<10?35:age>=15&&age<=20?30:age>=5&&age<7?20:age>20?25:5;
           const score = Math.min(100, sAge + (prix>300000?25:18) + 12);
           return {
-            id: Math.random(),
+            id: d.features[0].properties.label,
             adresse: d.features[0].properties.label,
             ville: nomVille,
             score,

@@ -73,6 +73,17 @@ export default function MapComponent({ prospects, onSelect, center = [44.837, -0
     };
   }, []);
 
+  // Animate map to new center when it changes
+  useEffect(() => {
+    if (!ready || !mapInstance.current) return;
+    const map = mapInstance.current;
+    // Zoom out, fly to new center, zoom in
+    map.setZoom(6, { animate: true, duration: 0.5 });
+    setTimeout(() => {
+      map.flyTo(center, 13, { animate: true, duration: 1.2 });
+    }, 500);
+  }, [center[0], center[1], ready]);
+
   useEffect(() => {
     if (!ready || !mapInstance.current) return;
     const L = (window as any).L;
