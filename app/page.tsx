@@ -3,47 +3,14 @@ import { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react"
 
 const MapComponent = lazy(() => import("./map-component"));
 
-// ── Geocoding BAN ──────────────────────────────────────────────
-async function geocodeVille(q: string) {
-  const r = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&type=municipality&limit=1`);
-  const d = await r.json();
-  if (!d.features?.length) return null;
-  const [lng, lat] = d.features[0].geometry.coordinates;
-  return { lat, lng, label: d.features[0].properties.label as string };
-}
-
-// ── DVF Scoring ────────────────────────────────────────────────
-function scoreFromDVF(t: any) {
-  const annee = new Date(t.date_mutation).getFullYear();
-  const age = new Date().getFullYear() - annee;
-  const sAge = age>=10&&age<=15?40:age>=7&&age<10?35:age>=15&&age<=20?30:age>=5&&age<7?20:age>20?25:5;
-  const sPV = t.valeur_fonciere>300000?25:t.valeur_fonciere>150000?18:10;
-  const sType = t.type_local==="Maison"?15:12;
-  const score = Math.min(100, sAge+sPV+sType);
-  const adresse = `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim();
-  return {
-    id: Math.random(),
-    adresse: adresse||t.adresse_nom_voie||"Adresse inconnue",
-    ville: t.nom_commune,
-    score,
-    source: "DVF",
-    status: score>=65?"À contacter":"À surveiller",
-    notes: `Acheté en ${annee} · ${t.surface_reelle_bati||"?"}m² · ${Math.round(t.valeur_fonciere/1000)}k€`,
-    lat: t.latitude,
-    lng: t.longitude,
-    details: { anciennete_ans: age, prix_achat: t.valeur_fonciere }
-  };
-}
-
-async function fetchDVF(lat: number, lng: number) {
-  const url = `https://api-dvf.etalab.studio/api/geopoints?lat=${lat}&lon=${lng}&dist=3000&nombre_resultats=80`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("API DVF indisponible");
-  const d = await r.json();
-  return (d.results||d||[])
-    .filter((t:any)=>(t.type_local==="Maison"||t.type_local==="Appartement")&&t.valeur_fonciere>0&&t.latitude&&t.longitude)
-    .map(scoreFromDVF)
-    .sort((a:any,b:any)=>b.score-a.score);
+// ── Prospection DVF via API Route ──────────────────────────────
+async function lancerDVF(ville: string) {
+  const res = await fetch(`/api/dvf?ville=${encodeURIComponent(ville)}`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || "Erreur API DVF");
+  }
+  return res.json();
 }
 
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; };
@@ -305,14 +272,11 @@ export default function App() {
                     if(e.key!=="Enter"||!prospSecteur.trim()) return;
                     setDvfLoading(true); setDvfError("");
                     try {
-                      const geo = await geocodeVille(prospSecteur);
-                      if(!geo){setDvfError("Ville introuvable");setDvfLoading(false);return;}
-                      setMapCenter([geo.lat,geo.lng]);
-                      const results = await fetchDVF(geo.lat, geo.lng);
-                      if(!results.length){setDvfError("Aucun résultat DVF");setDvfLoading(false);return;}
+                      const data = await lancerDVF(prospSecteur);
+                      setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
                       setProspects(prev=>{
                         const existing = new Set(prev.map(p=>p.adresse));
-                        return [...prev,...results.filter((r:any)=>!existing.has(r.adresse)).map((r:any)=>({...r,id:Date.now()+Math.random()} as any))];
+                        return [...prev,...data.prospects.filter((r:any)=>!existing.has(r.adresse))];
                       });
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
@@ -321,13 +285,11 @@ export default function App() {
                     if(!prospSecteur.trim()) return;
                     setDvfLoading(true); setDvfError("");
                     try {
-                      const geo = await geocodeVille(prospSecteur);
-                      if(!geo){setDvfError("Ville introuvable");setDvfLoading(false);return;}
-                      setMapCenter([geo.lat,geo.lng]);
-                      const results = await fetchDVF(geo.lat, geo.lng);
+                      const data = await lancerDVF(prospSecteur);
+                      setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
                       setProspects(prev=>{
                         const existing = new Set(prev.map(p=>p.adresse));
-                        return [...prev,...results.filter((r:any)=>!existing.has(r.adresse)).map((r:any)=>({...r} as any))];
+                        return [...prev,...data.prospects.filter((r:any)=>!existing.has(r.adresse))];
                       });
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
