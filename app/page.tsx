@@ -308,7 +308,7 @@ export default function App() {
                       const geo = await geocodeVille(prospSecteur);
                       if(!geo){setDvfError("Ville introuvable");setDvfLoading(false);return;}
                       setMapCenter([geo.lat,geo.lng]);
-                      const results = await fetchDVF(geo.lat, geo.lng, 3000);
+                      const results = await fetchDVF(geo.lat, geo.lng);
                       if(!results.length){setDvfError("Aucun résultat DVF");setDvfLoading(false);return;}
                       setProspects(prev=>{
                         const existing = new Set(prev.map(p=>p.adresse));
@@ -324,7 +324,7 @@ export default function App() {
                       const geo = await geocodeVille(prospSecteur);
                       if(!geo){setDvfError("Ville introuvable");setDvfLoading(false);return;}
                       setMapCenter([geo.lat,geo.lng]);
-                      const results = await fetchDVF(geo.lat, geo.lng, 3000);
+                      const results = await fetchDVF(geo.lat, geo.lng);
                       setProspects(prev=>{
                         const existing = new Set(prev.map(p=>p.adresse));
                         return [...prev,...results.filter(r=>!existing.has(r.adresse)).map(r=>({...r} as any))];
