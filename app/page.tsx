@@ -209,10 +209,11 @@ export default function App() {
   const [mapCenter, setMapCenter] = useState<[number,number]>([44.837, -0.579]);
   const [selProspect, setSelProspect] = useState<Prospect|null>(null);
   const [acheteurs] = useState<Acheteur[]>(ACHETEURS);
-  const [rdvs] = useState<RDV[]>([
+  const [rdvs, setRdvs] = useState<RDV[]>([
     {id:1,titre:"Visite Villa des Acacias",client:"Thomas Lefebvre",tel:"06 11 22 33 44",date:"2026-05-14",heure:"10:00",duree:60,type:"visite",bien:"14 rue des Acacias"},
     {id:2,titre:"Signature mandat",client:"Sophie Martin",tel:"06 55 44 33 22",date:"2026-05-15",heure:"14:00",duree:90,type:"signature",bien:"7 allée des Pins"},
   ]);
+  const [rdvForm, setRdvForm] = useState<Partial<RDV>|null>(null);
   const [selM, setSelM] = useState<Mandat|null>(null);
   const [chat, setChat] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([{id:1,role:"agent",text:"Bonjour. 3 mandats actifs, 2 rendez-vous cette semaine. Comment puis-je vous aider ?"}]);
@@ -232,6 +233,9 @@ export default function App() {
   const [transacs, setTransacs] = useState<Transac[]>(TRANSACS_INIT);
   // Courrier modal
   const [courrier, setCourrier] = useState<CourrierModal|null>(null);
+  // Propriétaire lookup
+  const [propData, setPropData] = useState<Record<string,any>>({});
+  const [propLoading, setPropLoading] = useState<string|null>(null);
   const [agent, setAgent] = useState({prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"});
   const [onboarding, setOnboarding] = useState(() => typeof window!=="undefined"?!localStorage.getItem("m_setup"):true);
   const [obStep, setObStep] = useState(0);
@@ -491,10 +495,44 @@ export default function App() {
                           </div>
                         </div>
                         <div style={{fontSize:11,color:C.muted,marginLeft:38}}>{p.notes}</div>
+                        {selProspect?.id===p.id&&propData[String(p.id)]&&(
+                          <div style={{marginTop:10,marginLeft:38,padding:"10px 12px",background:C.card,borderRadius:8,border:`1px solid ${C.border}`}}>
+                            {propData[String(p.id)].parcelles?.length>0&&(
+                              <div style={{marginBottom:6}}>
+                                <span style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.05em"}}>Cadastre — </span>
+                                <span style={{fontSize:12,color:C.text}}>Section {propData[String(p.id)].parcelles[0].section} n°{propData[String(p.id)].parcelles[0].numero} · {propData[String(p.id)].parcelles[0].contenance}m²</span>
+                                {propData[String(p.id)].deepLink&&<a href={propData[String(p.id)].deepLink} target="_blank" rel="noopener" style={{fontSize:11,color:C.blue,marginLeft:8,textDecoration:"none"}}>Voir carte →</a>}
+                              </div>
+                            )}
+                            {propData[String(p.id)].entreprises?.length>0&&(
+                              <div>
+                                <span style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.05em"}}>Sirene — </span>
+                                <span style={{fontSize:12,color:C.text}}>{propData[String(p.id)].entreprises[0].nom}</span>
+                                <span style={{fontSize:11,color:C.muted,marginLeft:6}}>{propData[String(p.id)].entreprises[0].activite}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                         {selProspect?.id===p.id&&(
                           <div style={{marginTop:10,marginLeft:38,display:"flex",gap:6}}>
                             <button onClick={e=>{e.stopPropagation();setCourrier({prospect:p,template:"prospection",content:"",loading:false});setNav("courriers");}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Courrier</button>
-                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse complète du prospect au ${p.adresse} : score ${p.score}/100, acheté il y a ${(p as any).details?.anciennete_ans||"?"} ans. Quelle stratégie de contact recommandes-tu ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Analyser</button>
+                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse complète du prospect au ${p.adresse} : score ${p.score}/100, ${p.notes}. Quelle stratégie de contact recommandes-tu ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Analyser</button>
+                            {(p as any).lat&&(p as any).lng&&(
+                              <button onClick={async e=>{
+                                e.stopPropagation();
+                                const key=String(p.id);
+                                if(propData[key]) return;
+                                setPropLoading(key);
+                                try{
+                                  const r=await fetch(`/api/proprietaire?lat=${(p as any).lat}&lng=${(p as any).lng}&adresse=${encodeURIComponent(p.adresse+" "+p.ville)}`);
+                                  const d=await r.json();
+                                  setPropData(x=>({...x,[key]:d}));
+                                }catch{}
+                                setPropLoading(null);
+                              }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>
+                                {propLoading===String(p.id)?"...":"Cadastre"}
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -560,9 +598,10 @@ export default function App() {
                     <h2 style={{fontSize:26,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>{selM.nom_propriete}</h2>
                     <p style={{fontSize:14,color:C.muted}}>{selM.adresse}, {selM.ville}</p>
                   </div>
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Préparation de la signature Yousign pour ${selM.nom_propriete}. Envoi à ${selM.proprietaire} (${selM.email}). Confirmation ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 16px",fontSize:13,color:C.text,cursor:"pointer",fontWeight:500}}>Yousign</button>
-                    <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Rédaction d'un email pour ${selM.proprietaire} concernant ${selM.nom_propriete}. Quel est l'objet ?`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"8px 16px",fontSize:13,cursor:"pointer",fontWeight:500}}>Email</button>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),ville:selM.ville,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
+                    <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Préparation de la signature Yousign pour ${selM.nom_propriete}. Envoi à ${selM.proprietaire} (${selM.email}). Confirmation ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Yousign</button>
+                    <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Rédaction d'un email pour ${selM.proprietaire} concernant ${selM.nom_propriete}. Quel est l'objet ?`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"8px 14px",fontSize:12,cursor:"pointer",fontWeight:500}}>Email</button>
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:24}}>
@@ -689,22 +728,57 @@ export default function App() {
         {/* AGENDA */}
         {nav==="agenda"&&(
           <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.3s ease"}}>
-            <div style={{marginBottom:32}}>
-              <h1 style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em",marginBottom:6}}>Agenda</h1>
-              <p style={{color:C.muted,fontSize:15}}>Vos prochains rendez-vous</p>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:32}}>
+              <div>
+                <h1 style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em",marginBottom:6}}>Agenda</h1>
+                <p style={{color:C.muted,fontSize:15}}>Vos prochains rendez-vous</p>
+              </div>
+              <button onClick={()=>setRdvForm({type:"visite",duree:60,date:new Date().toISOString().slice(0,10),heure:"10:00"})} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer"}}>
+                Nouveau RDV
+              </button>
             </div>
+            {rdvForm&&(
+              <div style={{...card(),padding:"24px",marginBottom:24,animation:"fadeUp 0.2s ease"}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:16}}>Nouveau rendez-vous</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
+                  {[{l:"Titre",k:"titre",type:"text",p:"Ex: Visite appartement"},{l:"Client",k:"client",type:"text",p:"Nom du client"},{l:"Téléphone",k:"tel",type:"text",p:"06 XX XX XX XX"},{l:"Date",k:"date",type:"date",p:""},{l:"Heure",k:"heure",type:"time",p:""},{l:"Durée (min)",k:"duree",type:"number",p:"60"}].map(f=>(
+                    <div key={f.k}>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>{f.l}</div>
+                      <input type={f.type} value={(rdvForm as any)[f.k]||""} onChange={e=>setRdvForm(x=>({...x,[f.k]:f.type==="number"?parseInt(e.target.value):e.target.value}))} placeholder={f.p} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 11px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginBottom:16}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Type</div>
+                  <div style={{display:"flex",gap:8}}>
+                    {["visite","signature","estimation","appel"].map(t=>(
+                      <button key={t} onClick={()=>setRdvForm(x=>({...x,type:t}))} style={{padding:"5px 12px",background:rdvForm.type===t?C.accent:C.surface,color:rdvForm.type===t?(dark?"#080808":"#FAFAFA"):C.muted,border:`1px solid ${rdvForm.type===t?C.accent:C.border}`,borderRadius:20,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{
+                    if(!rdvForm.titre||!rdvForm.client) return;
+                    setRdvs(rs=>[...rs,{id:Date.now(),titre:rdvForm.titre!,client:rdvForm.client!,tel:rdvForm.tel||"",date:rdvForm.date||"",heure:rdvForm.heure||"",duree:rdvForm.duree||60,type:rdvForm.type||"visite",bien:rdvForm.bien||""}]);
+                    setRdvForm(null);
+                  }} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:500,cursor:"pointer"}}>Ajouter</button>
+                  <button onClick={()=>setRdvForm(null)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",fontSize:13,color:C.muted,cursor:"pointer"}}>Annuler</button>
+                </div>
+              </div>
+            )}
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              {rdvs.map(r=>(
+              {rdvs.sort((a,b)=>a.date.localeCompare(b.date)).map(r=>(
                 <div key={r.id} style={{...card(),padding:"20px 24px",display:"flex",alignItems:"center",gap:20}}>
-                  <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:r.type==="visite"?C.green:r.type==="signature"?C.amber:C.blue,flexShrink:0}}/>
+                  <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:r.type==="visite"?C.green:r.type==="signature"?C.amber:r.type==="estimation"?C.purple:C.blue,flexShrink:0}}/>
                   <div style={{flex:1}}>
                     <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:3}}>{r.titre}</div>
-                    <div style={{fontSize:13,color:C.muted}}>{r.client} · {r.bien}</div>
+                    <div style={{fontSize:13,color:C.muted}}>{r.client}{r.tel&&` · ${r.tel}`}{r.bien&&` · ${r.bien}`}</div>
                   </div>
                   <div style={{textAlign:"right",flexShrink:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{new Date(r.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{new Date(r.date+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})}</div>
                     <div style={{fontSize:13,color:C.muted}}>{r.heure} · {r.duree}min</div>
                   </div>
+                  <button onClick={()=>setRdvs(rs=>rs.filter(x=>x.id!==r.id))} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",flexShrink:0,padding:"4px 8px"}}>×</button>
                 </div>
               ))}
             </div>
