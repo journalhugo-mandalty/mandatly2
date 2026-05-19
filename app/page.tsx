@@ -208,7 +208,8 @@ export default function App() {
   const [dvfError, setDvfError] = useState("");
   const [mapCenter, setMapCenter] = useState<[number,number]>([44.837, -0.579]);
   const [selProspect, setSelProspect] = useState<Prospect|null>(null);
-  const [acheteurs] = useState<Acheteur[]>(ACHETEURS);
+  const [acheteurs, setAcheteurs] = useState<Acheteur[]>(ACHETEURS);
+  const [acheteurForm, setAcheteurForm] = useState<Partial<Acheteur>|null>(null);
   const [rdvs, setRdvs] = useState<RDV[]>([
     {id:1,titre:"Visite Villa des Acacias",client:"Thomas Lefebvre",tel:"06 11 22 33 44",date:"2026-05-14",heure:"10:00",duree:60,type:"visite",bien:"14 rue des Acacias"},
     {id:2,titre:"Signature mandat",client:"Sophie Martin",tel:"06 55 44 33 22",date:"2026-05-15",heure:"14:00",duree:90,type:"signature",bien:"7 allée des Pins"},
@@ -269,7 +270,7 @@ export default function App() {
     setTyping(true);
     try {
       const res = await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-        system:`Tu es ${agent.prenom}, secrétaire IA de ${agent.prenom} ${agent.nom} chez ${agent.agence}. Mandats: ${mandats.map(m=>`${m.nom_propriete} ${m.adresse} ${fmt(m.prix)}€ ${m.surface}m² prop:${m.proprietaire}`).join(" | ")}. Prospects: ${prospects.map(p=>`${p.nom} ${p.adresse} score:${p.score}`).join(" | ")}. Réponds en français, concis, professionnel, 1-3 phrases max.`,
+        system:`Tu es ${agent.prenom}, secrétaire IA de ${agent.prenom} ${agent.nom} chez ${agent.agence}. Date: ${new Date().toLocaleDateString("fr-FR")}. Mandats (${mandats.length}): ${mandats.map(m=>`${m.nom_propriete} ${m.adresse} ${fmt(m.prix)}€ ${m.surface}m² prop:${m.proprietaire} pipeline:${m.pipeline}`).join(" | ")}. Prospects DVF/DPE (${prospects.length} top): ${prospects.slice(0,5).map(p=>`${p.adresse} score:${p.score} ${p.notes}`).join(" | ")}. Acheteurs (${acheteurs.length}): ${acheteurs.map(a=>`${a.nom} budget:${fmt(a.budget_min)}-${fmt(a.budget_max)}€ type:${a.types.join(",")} villes:${a.villes.join(",")}`).join(" | ")}. RDVs: ${rdvs.map(r=>`${r.titre} ${r.date} ${r.heure}`).join(" | ")}. CA encaissé: ${fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))}€ / ${fmt(transacs.reduce((a,t)=>a+t.montant,0))}€ prévu. Réponds en français, concis, professionnel, 1-4 phrases max.`,
         messages:newMsgs.slice(-8).map(m=>({role:m.role==="agent"?"assistant":"user",content:m.text})),
         max_tokens:400
       })});
@@ -684,8 +685,42 @@ export default function App() {
                 <h1 style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em",marginBottom:6}}>Acheteurs</h1>
                 <p style={{color:C.muted,fontSize:15}}>{acheteurs.length} acheteurs actifs</p>
               </div>
-              <button style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer"}}>Ajouter</button>
+              <button onClick={()=>setAcheteurForm({types:["Maison"],villes:[],budget_min:200000,budget_max:400000,surface_min:80,chambres_min:3})} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer"}}>Ajouter</button>
             </div>
+            {acheteurForm&&(
+              <div style={{...card(),padding:"24px",marginBottom:24,animation:"fadeUp 0.2s ease"}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:16}}>Nouvel acheteur</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:16}}>
+                  {[{l:"Nom complet",k:"nom",p:"Thomas Lefebvre"},{l:"Email",k:"email",p:"t.lefebvre@gmail.com"},{l:"Téléphone",k:"tel",p:"06 XX XX XX XX"},{l:"Budget min (€)",k:"budget_min",p:"200000"},{l:"Budget max (€)",k:"budget_max",p:"400000"},{l:"Surface min (m²)",k:"surface_min",p:"80"}].map(f=>(
+                    <div key={f.k}>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>{f.l}</div>
+                      <input value={(acheteurForm as any)[f.k]||""} onChange={e=>setAcheteurForm(x=>({...x,[f.k]:["budget_min","budget_max","surface_min","chambres_min"].includes(f.k)?Number(e.target.value):e.target.value}))} placeholder={f.p} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 11px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginBottom:16}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Type recherché</div>
+                  <div style={{display:"flex",gap:8}}>
+                    {["Maison","Appartement"].map(t=>{
+                      const sel=(acheteurForm.types||[]).includes(t);
+                      return <button key={t} onClick={()=>setAcheteurForm(x=>x?({...x,types:sel?(x.types||[]).filter(v=>v!==t):[...(x.types||[]),t]}):x)} style={{padding:"5px 14px",background:sel?C.accent:C.surface,color:sel?(dark?"#080808":"#FAFAFA"):C.muted,border:`1px solid ${sel?C.accent:C.border}`,borderRadius:20,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>{t}</button>;
+                    })}
+                  </div>
+                </div>
+                <div style={{marginBottom:16}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Villes cibles</div>
+                  <input value={(acheteurForm.villes||[]).join(", ")} onChange={e=>setAcheteurForm(x=>({...x,villes:e.target.value.split(",").map(v=>v.trim()).filter(Boolean)}))} placeholder="Bordeaux, Mérignac, Pessac" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 11px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{
+                    if(!acheteurForm.nom) return;
+                    setAcheteurs(a=>[...a,{id:Date.now(),nom:acheteurForm.nom!,email:acheteurForm.email||"",tel:acheteurForm.tel||"",budget_min:acheteurForm.budget_min||0,budget_max:acheteurForm.budget_max||0,surface_min:acheteurForm.surface_min||0,chambres_min:acheteurForm.chambres_min||0,types:acheteurForm.types||[],villes:acheteurForm.villes||[],notes:""}]);
+                    setAcheteurForm(null);
+                  }} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:500,cursor:"pointer"}}>Ajouter</button>
+                  <button onClick={()=>setAcheteurForm(null)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",fontSize:13,color:C.muted,cursor:"pointer"}}>Annuler</button>
+                </div>
+              </div>
+            )}
             <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
               {acheteurs.map(a=>{
                 const matches = mandats.filter(m=>m.prix>=a.budget_min&&m.prix<=a.budget_max&&m.surface>=a.surface_min&&a.types.includes(m.type));
