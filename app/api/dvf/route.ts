@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
           const sType = t.type_local==="Maison"?15:12;
           const score = Math.min(100, sAge+sPV+sType);
           return {
-            id: Math.random(),
+            id: "dvf-" + `${t.adresse_numero||""}${t.adresse_nom_voie||""}${(t.date_mutation||"").slice(0,7)}`.replace(/[^a-zA-Z0-9]/g,"").slice(0,24),
             adresse: `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim() || "Adresse inconnue",
             ville: t.nom_commune || nomVille,
             score,
@@ -98,7 +98,7 @@ export async function GET(req: NextRequest) {
           const sType = i%3===0?15:12;
           const score = Math.min(100, sAge+sPV+sType);
           return {
-            id: Math.random(),
+            id: "geo-" + rue.replace(/[^a-zA-Z0-9]/g,"").slice(0,20),
             adresse: label,
             ville: nomVille,
             score,

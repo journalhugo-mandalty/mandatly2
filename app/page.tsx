@@ -43,8 +43,11 @@ async function lancerDVF(ville: string) {
         const sPV = t.valeur_fonciere>300000?25:t.valeur_fonciere>150000?18:10;
         const sType = t.type_local==="Maison"?15:12;
         const score = Math.min(100, sAge+sPV+sType);
+        // HTML-safe stable ID: no spaces, deterministic
+        const rawId = `${t.adresse_numero||""}${t.adresse_nom_voie||""}${(t.date_mutation||"").slice(0,7)}`;
+        const stableId = "dvf-" + rawId.replace(/[^a-zA-Z0-9]/g,"").slice(0,24);
         return {
-          id: (t.adresse_numero||"") + (t.adresse_nom_voie||"") + (t.date_mutation||""),
+          id: stableId,
           adresse: `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim()||"Adresse inconnue",
           ville: t.nom_commune || nomVille,
           score,
@@ -75,8 +78,9 @@ async function lancerDVF(ville: string) {
           const prix = 120000 + (rueHash % 380000);
           const sAge = age>=10&&age<=15?40:age>=7&&age<10?35:age>=15&&age<=20?30:age>=5&&age<7?20:age>20?25:5;
           const score = Math.min(100, sAge + (prix>300000?25:18) + 12);
+          const geoId = "geo-" + rue.replace(/[^a-zA-Z0-9]/g,"").slice(0,20);
           return {
-            id: d.features[0].properties.label,
+            id: geoId,
             adresse: d.features[0].properties.label,
             ville: nomVille,
             score,
@@ -93,12 +97,25 @@ async function lancerDVF(ville: string) {
       .map(r => r.value);
   }
 
+  // Fetch DPE signals in parallel (non-blocking)
+  let dpeProspects: any[] = [];
+  try {
+    const dpeRes = await fetch(`/api/dpe?commune=${encodeURIComponent(nomVille)}&lat=${lat}&lng=${lng}`);
+    if (dpeRes.ok) {
+      const dpeData = await dpeRes.json();
+      dpeProspects = dpeData.prospects || [];
+    }
+  } catch {}
+
+  const allProspects = [...prospects, ...dpeProspects]
+    .sort((a,b) => b.score - a.score);
+
   return {
-    prospects: prospects.sort((a,b) => b.score-a.score),
+    prospects: allProspects,
     lat: String(lat),
     lng: String(lng),
     ville: nomVille,
-    total: prospects.length
+    total: allProspects.length
   };
 }
 
@@ -359,7 +376,7 @@ export default function App() {
                 <div style={{display:"flex",gap:8,marginBottom:12}}>
                   <input value={prospSecteur} onChange={e=>setProspSecteur(e.target.value)} onKeyDown={async e=>{
                     if(e.key!=="Enter"||!prospSecteur.trim()) return;
-                    setDvfLoading(true); setDvfError("");
+                    setDvfLoading(true); setDvfError(""); setSelProspect(null); setProspects([]);
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
@@ -369,7 +386,7 @@ export default function App() {
                   }} placeholder="Code postal ou commune..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
                   <button disabled={dvfLoading||!prospSecteur} onClick={async()=>{
                     if(!prospSecteur.trim()) return;
-                    setDvfLoading(true); setDvfError("");
+                    setDvfLoading(true); setDvfError(""); setSelProspect(null); setProspects([]);
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);

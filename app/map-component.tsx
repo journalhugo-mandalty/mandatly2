@@ -72,13 +72,11 @@ export default function MapComponent({ prospects, onSelect, center, dark = true 
 
     prevCenter.current = center;
 
-    // Step 1: zoom out smoothly
-    map.flyTo([prevLat, prevLng], 5, { animate: true, duration: 0.8 });
-
-    // Step 2: fly to new city and zoom in
-    setTimeout(() => {
+    // Step 1: zoom out, then fly to new city on moveend
+    map.once("moveend", () => {
       map.flyTo([newLat, newLng], 13, { animate: true, duration: 1.4 });
-    }, 900);
+    });
+    map.flyTo([prevLat, prevLng], 5, { animate: true, duration: 0.8 });
   }, [center[0], center[1], ready]);
 
   // Update markers when prospects change

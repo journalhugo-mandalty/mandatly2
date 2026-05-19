@@ -116,8 +116,12 @@ export function calculerScore(dvf: DVFTransaction): ProspectScore {
     anciennete >= 7 ? `${anciennete} ans de détention` : null,
   ].filter(Boolean).join(" · ");
 
+  // Deterministic stable ID based on address + date
+  const rawId = `${dvf.adresse_numero || ""}${dvf.adresse_nom_voie || ""}${dvf.date_mutation || ""}`;
+  const stableId = rawId.split("").reduce((a: number, c: string) => ((a << 5) - a) + c.charCodeAt(0), 0) >>> 0;
+
   return {
-    id: Date.now() + Math.random(),
+    id: stableId,
     adresse: adresse || dvf.adresse_nom_voie || "Adresse inconnue",
     ville: dvf.nom_commune,
     code_postal: dvf.code_postal,
