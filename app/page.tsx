@@ -237,13 +237,28 @@ export default function App() {
   // Propriétaire lookup
   const [propData, setPropData] = useState<Record<string,any>>({});
   const [propLoading, setPropLoading] = useState<string|null>(null);
+  // Email modal
+  type EmailModal = {to:string; sujet:string; corps:string; loading:boolean};
+  const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
   const [agent, setAgent] = useState({prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"});
   const [onboarding, setOnboarding] = useState(() => typeof window!=="undefined"?!localStorage.getItem("m_setup"):true);
   const [obStep, setObStep] = useState(0);
   const [obData, setObData] = useState({prenom:"",nom:"",agence:"",email:""});
   const chatEnd = useRef<HTMLDivElement>(null);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:"smooth"});},[msgs]);
-  useEffect(()=>{const s=localStorage.getItem("m_agent");if(s)setAgent(JSON.parse(s));},[]);
+  // Load persisted state
+  useEffect(()=>{
+    const s=localStorage.getItem("m_agent"); if(s) setAgent(JSON.parse(s));
+    const m=localStorage.getItem("m_mandats"); if(m) setMandats(JSON.parse(m));
+    const t=localStorage.getItem("m_transacs"); if(t) setTransacs(JSON.parse(t));
+    const a=localStorage.getItem("m_acheteurs"); if(a) setAcheteurs(JSON.parse(a));
+    const r=localStorage.getItem("m_rdvs"); if(r) setRdvs(JSON.parse(r));
+  },[]);
+  // Persist on change
+  useEffect(()=>{localStorage.setItem("m_mandats",JSON.stringify(mandats));},[mandats]);
+  useEffect(()=>{localStorage.setItem("m_transacs",JSON.stringify(transacs));},[transacs]);
+  useEffect(()=>{localStorage.setItem("m_acheteurs",JSON.stringify(acheteurs));},[acheteurs]);
+  useEffect(()=>{localStorage.setItem("m_rdvs",JSON.stringify(rdvs));},[rdvs]);
 
   const C = dark ? {
     bg:"#080808",surface:"#0F0F0F",card:"#141414",border:"#1C1C1C",border2:"#242424",
@@ -519,6 +534,9 @@ export default function App() {
                             <button onClick={e=>{e.stopPropagation();setCourrier({prospect:p,template:"prospection",content:"",loading:false});setNav("courriers");}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Courrier</button>
                             <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse complète du prospect au ${p.adresse} : score ${p.score}/100, ${p.notes}. Quelle stratégie de contact recommandes-tu ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Analyser</button>
                             {(p as any).lat&&(p as any).lng&&(
+                              <button onClick={e=>{e.stopPropagation();window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${(p as any).lat},${(p as any).lng}`,"_blank");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Street View</button>
+                            )}
+                            {(p as any).lat&&(p as any).lng&&(
                               <button onClick={async e=>{
                                 e.stopPropagation();
                                 const key=String(p.id);
@@ -612,7 +630,7 @@ export default function App() {
                         </div>
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}}>
                           <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),ville:selM.ville,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
-                          <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Rédaction d'un email pour ${selM.proprietaire} concernant ${selM.nom_propriete}.`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Email</button>
+                          <button onClick={()=>setEmailModal({to:selM.email,sujet:`${selM.nom_propriete} — `,corps:"",loading:false})} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Email</button>
                           <button onClick={()=>{if(confirm(`Supprimer ${selM.nom_propriete} ?`)){setMandats(ms=>ms.filter(m=>m.id!==selM.id));setSelM(null);}}} style={{background:C.red+"15",color:C.red,border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Supprimer</button>
                         </div>
                       </div>
@@ -1147,6 +1165,49 @@ export default function App() {
             <div style={{padding:12,borderTop:`1px solid ${C.border}`,display:"flex",gap:8}}>
               <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendMsg()} placeholder="Posez votre question..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 13px",fontSize:13,transition:"border-color 0.15s"}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
               <button onClick={sendMsg} style={{background:C.accent,border:"none",color:dark?"#080808":"#FAFAFA",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>→</button>
+            </div>
+          </div>
+        )}
+
+        {/* EMAIL MODAL */}
+        {emailModal&&(
+          <div onClick={()=>setEmailModal(null)} style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div onClick={e=>e.stopPropagation()} style={{width:560,background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:28,boxShadow:`0 24px 64px ${C.shadow}`,animation:"fadeUp 0.2s ease"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+                <div style={{fontSize:15,fontWeight:600,color:C.text}}>Nouveau message</div>
+                <button onClick={()=>setEmailModal(null)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>À</div>
+                  <input value={emailModal.to} onChange={e=>setEmailModal(x=>x?{...x,to:e.target.value}:null)} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>Objet</div>
+                  <input value={emailModal.sujet} onChange={e=>setEmailModal(x=>x?{...x,sujet:e.target.value}:null)} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+              </div>
+              <button disabled={emailModal.loading} onClick={async()=>{
+                setEmailModal(x=>x?{...x,loading:true}:null);
+                try{
+                  const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+                    system:`Tu es un assistant expert en communication immobilière professionnelle. Rédige uniquement le corps de l'email, sans "Objet:" ni en-tête. Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}.`,
+                    messages:[{role:"user",content:`Rédige un email professionnel avec l'objet "${emailModal.sujet}" à envoyer à "${emailModal.to}". Contexte: ${emailModal.corps||"email professionnel immobilier"}. 3-4 paragraphes concis.`}],
+                    max_tokens:500
+                  })});
+                  const d=await res.json();
+                  setEmailModal(x=>x?{...x,loading:false,corps:d.content?.[0]?.text||""}:null);
+                }catch{setEmailModal(x=>x?{...x,loading:false}:null);}
+              }} style={{width:"100%",background:emailModal.corps?C.surface:emailModal.loading?C.border:C.accent,color:emailModal.corps?C.muted:emailModal.loading?C.muted:(dark?"#080808":"#FAFAFA"),border:emailModal.corps?`1px solid ${C.border}`:"none",borderRadius:8,padding:"10px",fontSize:13,fontWeight:500,cursor:emailModal.loading?"default":"pointer",marginBottom:12,transition:"all 0.15s"}}>
+                {emailModal.loading?"Génération en cours...":emailModal.corps?"Regénérer":"Générer avec Lucas"}
+              </button>
+              {emailModal.corps&&(
+                <textarea value={emailModal.corps} onChange={e=>setEmailModal(x=>x?{...x,corps:e.target.value}:null)} rows={8} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"12px",fontSize:13,lineHeight:1.6,resize:"vertical",marginBottom:14}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+              )}
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                {emailModal.corps&&<button onClick={()=>{const m=`mailto:${emailModal.to}?subject=${encodeURIComponent(emailModal.sujet)}&body=${encodeURIComponent(emailModal.corps)}`;window.open(m);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Ouvrir dans messagerie</button>}
+                {emailModal.corps&&<button onClick={()=>navigator.clipboard.writeText(emailModal!.corps)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",fontSize:13,color:C.text,cursor:"pointer"}}>Copier</button>}
+              </div>
             </div>
           </div>
         )}
