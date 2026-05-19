@@ -7,12 +7,19 @@ const eslintConfig = defineConfig([
   ...nextTs,
   // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // External API responses (DVF, DPE, IGN, Sirene) legitimately need any
+      "@typescript-eslint/no-explicit-any": "warn",
+      // useEffect deps warnings are intentional (Leaflet imperative API)
+      "react-hooks/exhaustive-deps": "warn",
+    },
+  },
 ]);
 
 export default eslintConfig;

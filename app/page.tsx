@@ -202,18 +202,28 @@ const fmt = (n:number) => n?.toLocaleString("fr-FR") || "0";
 export default function App() {
   const [dark, setDark] = useState(true);
   const [nav, setNav] = useState("dashboard");
-  const [mandats, setMandats] = useState<Mandat[]>(MANDATS);
+  const [mandats, setMandats] = useState<Mandat[]>(()=>{
+    if(typeof window==="undefined") return MANDATS;
+    try{const s=localStorage.getItem("m_mandats");return s?JSON.parse(s):MANDATS;}catch{return MANDATS;}
+  });
   const [prospects, setProspects] = useState<Prospect[]>(PROSPECTS);
   const [dvfLoading, setDvfLoading] = useState(false);
   const [dvfError, setDvfError] = useState("");
   const [mapCenter, setMapCenter] = useState<[number,number]>([44.837, -0.579]);
   const [selProspect, setSelProspect] = useState<Prospect|null>(null);
-  const [acheteurs, setAcheteurs] = useState<Acheteur[]>(ACHETEURS);
+  const [acheteurs, setAcheteurs] = useState<Acheteur[]>(()=>{
+    if(typeof window==="undefined") return ACHETEURS;
+    try{const s=localStorage.getItem("m_acheteurs");return s?JSON.parse(s):ACHETEURS;}catch{return ACHETEURS;}
+  });
   const [acheteurForm, setAcheteurForm] = useState<Partial<Acheteur>|null>(null);
-  const [rdvs, setRdvs] = useState<RDV[]>([
+  const RDV_INIT: RDV[] = [
     {id:1,titre:"Visite Villa des Acacias",client:"Thomas Lefebvre",tel:"06 11 22 33 44",date:"2026-05-14",heure:"10:00",duree:60,type:"visite",bien:"14 rue des Acacias"},
     {id:2,titre:"Signature mandat",client:"Sophie Martin",tel:"06 55 44 33 22",date:"2026-05-15",heure:"14:00",duree:90,type:"signature",bien:"7 allée des Pins"},
-  ]);
+  ];
+  const [rdvs, setRdvs] = useState<RDV[]>(()=>{
+    if(typeof window==="undefined") return RDV_INIT;
+    try{const s=localStorage.getItem("m_rdvs");return s?JSON.parse(s):RDV_INIT;}catch{return RDV_INIT;}
+  });
   const [rdvForm, setRdvForm] = useState<Partial<RDV>|null>(null);
   const [selM, setSelM] = useState<Mandat|null>(null);
   const [chat, setChat] = useState(false);
@@ -231,7 +241,10 @@ export default function App() {
   const [estLoading, setEstLoading] = useState(false);
   const [estError, setEstError] = useState("");
   // Comptabilité
-  const [transacs, setTransacs] = useState<Transac[]>(TRANSACS_INIT);
+  const [transacs, setTransacs] = useState<Transac[]>(()=>{
+    if(typeof window==="undefined") return TRANSACS_INIT;
+    try{const s=localStorage.getItem("m_transacs");return s?JSON.parse(s):TRANSACS_INIT;}catch{return TRANSACS_INIT;}
+  });
   // Courrier modal
   const [courrier, setCourrier] = useState<CourrierModal|null>(null);
   // Propriétaire lookup
@@ -240,20 +253,16 @@ export default function App() {
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
-  const [agent, setAgent] = useState({prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"});
+  const AGENT_DEFAULT = {prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"};
+  const [agent, setAgent] = useState(()=>{
+    if(typeof window==="undefined") return AGENT_DEFAULT;
+    try{const s=localStorage.getItem("m_agent");return s?JSON.parse(s):AGENT_DEFAULT;}catch{return AGENT_DEFAULT;}
+  });
   const [onboarding, setOnboarding] = useState(() => typeof window!=="undefined"?!localStorage.getItem("m_setup"):true);
   const [obStep, setObStep] = useState(0);
   const [obData, setObData] = useState({prenom:"",nom:"",agence:"",email:""});
   const chatEnd = useRef<HTMLDivElement>(null);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:"smooth"});},[msgs]);
-  // Load persisted state
-  useEffect(()=>{
-    const s=localStorage.getItem("m_agent"); if(s) setAgent(JSON.parse(s));
-    const m=localStorage.getItem("m_mandats"); if(m) setMandats(JSON.parse(m));
-    const t=localStorage.getItem("m_transacs"); if(t) setTransacs(JSON.parse(t));
-    const a=localStorage.getItem("m_acheteurs"); if(a) setAcheteurs(JSON.parse(a));
-    const r=localStorage.getItem("m_rdvs"); if(r) setRdvs(JSON.parse(r));
-  },[]);
   // Persist on change
   useEffect(()=>{localStorage.setItem("m_mandats",JSON.stringify(mandats));},[mandats]);
   useEffect(()=>{localStorage.setItem("m_transacs",JSON.stringify(transacs));},[transacs]);
@@ -936,7 +945,7 @@ export default function App() {
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.muted,textAlign:"center"}}>
                   <div>
                     <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Remplissez le formulaire</div>
-                    <div style={{fontSize:12}}>L'estimation s'appuie sur les ventes réelles DVF dans un rayon de 5 km</div>
+                    <div style={{fontSize:12}}>{"L'estimation s'appuie sur les ventes réelles DVF dans un rayon de 5 km"}</div>
                   </div>
                 </div>
               )}
