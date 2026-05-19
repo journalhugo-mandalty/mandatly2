@@ -119,11 +119,68 @@ async function lancerDVF(ville: string) {
   };
 }
 
+// ── Estimation & Avis de valeur via DVF ──────────────────────
+async function lancerEstimation(type: string, surface: number, ville: string, etat: string) {
+  const banRes = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(ville)}&type=municipality&limit=1`);
+  const banData = await banRes.json();
+  if (!banData.features?.length) throw new Error("Ville introuvable");
+  const [lng, lat] = banData.features[0].geometry.coordinates;
+  const nomVille = banData.features[0].properties.label;
+
+  const dvfRes = await fetch(`https://api-dvf.etalab.studio/api/geopoints?lat=${lat}&lon=${lng}&dist=5000&nombre_resultats=200`);
+  if (!dvfRes.ok) throw new Error("API DVF indisponible");
+  const dvfData = await dvfRes.json();
+  const transactions: any[] = dvfData.results || dvfData || [];
+
+  const cutoff = new Date(Date.now() - 4 * 365 * 24 * 60 * 60 * 1000);
+  const comparables = transactions.filter(t =>
+    t.type_local === type && t.surface_reelle_bati > 0 && t.valeur_fonciere > 0 &&
+    t.surface_reelle_bati >= surface * 0.55 && t.surface_reelle_bati <= surface * 1.55 &&
+    new Date(t.date_mutation) >= cutoff
+  );
+
+  const prixM2s = comparables
+    .map(t => t.valeur_fonciere / t.surface_reelle_bati)
+    .filter(p => p > 500 && p < 25000)
+    .sort((a, b) => a - b);
+
+  if (prixM2s.length < 3) throw new Error(`Seulement ${prixM2s.length} comparable(s) DVF — élargissez le rayon ou changez de ville`);
+
+  const mid = Math.floor(prixM2s.length / 2);
+  const median = prixM2s.length % 2 ? prixM2s[mid] : (prixM2s[mid-1] + prixM2s[mid]) / 2;
+  const facteur = etat==="neuf"?1.12:etat==="bon"?1.0:etat==="moyen"?0.91:0.77;
+  const base = median * surface * facteur;
+
+  return {
+    ville: nomVille, nb_comparables: comparables.length,
+    prix_m2_median: Math.round(median),
+    prix_m2_min: Math.round(prixM2s[0]),
+    prix_m2_max: Math.round(prixM2s[prixM2s.length-1]),
+    estimation: Math.round(base),
+    fourchette_bas: Math.round(base * 0.91),
+    fourchette_haut: Math.round(base * 1.09),
+    comparables: comparables.slice(0,6).map(t => ({
+      adresse: `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim() || "—",
+      surface: t.surface_reelle_bati, prix: t.valeur_fonciere,
+      prix_m2: Math.round(t.valeur_fonciere / t.surface_reelle_bati),
+      date: t.date_mutation?.slice(0,7)||"",
+    })),
+  };
+}
+
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; };
-type Prospect = { id:number; nom:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; };
+type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; };
 type Acheteur = { id:number; nom:string; email:string; tel:string; budget_min:number; budget_max:number; surface_min:number; chambres_min:number; types:string[]; villes:string[]; notes:string; };
 type RDV = { id:number; titre:string; client:string; tel:string; date:string; heure:string; duree:number; type:string; bien:string; };
 type Msg = { id:number; role:"user"|"agent"; text:string; };
+type Transac = { id:number; mandat_id:number; label:string; adresse:string; montant:number; statut:"en_attente"|"encaisse"|"annule"; date_encaissement:string; };
+type CourrierModal = { prospect:Prospect; template:string; content:string; loading:boolean; };
+
+const TRANSACS_INIT: Transac[] = [
+  {id:1,mandat_id:1,label:"Villa des Acacias",adresse:"14 rue des Acacias, Bordeaux",montant:24250,statut:"en_attente",date_encaissement:""},
+  {id:2,mandat_id:2,label:"Victor Hugo",adresse:"32 cours Victor Hugo, Bordeaux",montant:14250,statut:"en_attente",date_encaissement:""},
+  {id:3,mandat_id:3,label:"Les Pins",adresse:"7 allée des Pins, Mérignac",montant:33000,statut:"en_attente",date_encaissement:""},
+];
 
 const MANDATS: Mandat[] = [
   {id:1,adresse:"14 rue des Acacias",nom_propriete:"Villa des Acacias",ville:"Bordeaux",prix:485000,surface:142,terrain:620,chambres:4,dpe:"C",type:"Maison",statut:"signe",pipeline:"signe",proprietaire:"Marie Dupont",tel:"06 12 34 56 78",email:"m.dupont@email.fr",honoraires:5,exclusif:true,fin_mandat:"15/07/2026",description:"Belle villa avec jardin paysagé, garage double, cuisine équipée. Quartier calme et résidentiel."},
@@ -166,6 +223,15 @@ export default function App() {
   const [prospSecteur, setProspSecteur] = useState("");
   const [prospMethod, setProspMethod] = useState("");
   const [profile, setProfile] = useState(false);
+  // Estimation
+  const [estForm, setEstForm] = useState({type:"Maison",surface:"",ville:"",etat:"bon"});
+  const [estResult, setEstResult] = useState<any>(null);
+  const [estLoading, setEstLoading] = useState(false);
+  const [estError, setEstError] = useState("");
+  // Comptabilité
+  const [transacs, setTransacs] = useState<Transac[]>(TRANSACS_INIT);
+  // Courrier modal
+  const [courrier, setCourrier] = useState<CourrierModal|null>(null);
   const [agent, setAgent] = useState({prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"});
   const [onboarding, setOnboarding] = useState(() => typeof window!=="undefined"?!localStorage.getItem("m_setup"):true);
   const [obStep, setObStep] = useState(0);
@@ -288,7 +354,7 @@ export default function App() {
   );
 
   // MAIN APP
-  const NAVS = [{id:"dashboard",label:"Vue d'ensemble"},{id:"prospects",label:"Prospection"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"}];
+  const NAVS = [{id:"dashboard",label:"Vue d'ensemble"},{id:"prospects",label:"Prospection"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif",color:C.text,overflow:"hidden"}}>
@@ -326,8 +392,8 @@ export default function App() {
               <p style={{color:C.muted,fontSize:15}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</p>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:32}}>
-              {[{l:"Mandats",v:mandats.length,sub:"actifs"},{l:"CA estimé",v:fmt(mandats.reduce((a,m)=>a+Math.round(m.prix*m.honoraires/100),0))+" €",sub:"honoraires"},{l:"Prospects",v:prospects.length,sub:"identifiés"},{l:"Rendez-vous",v:rdvs.length,sub:"à venir"}].map(k=>(
-                <div key={k.l} style={{...card(),padding:"20px 24px"}}>
+              {[{l:"Mandats",v:mandats.length,sub:"actifs",nav:"mandats"},{l:"CA encaissé",v:fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))+" €",sub:`/ ${fmt(transacs.reduce((a,t)=>a+t.montant,0))} prévu`,nav:"compta"},{l:"Prospects",v:prospects.length,sub:"identifiés",nav:"prospects"},{l:"Rendez-vous",v:rdvs.length,sub:"à venir",nav:"agenda"}].map(k=>(
+                <div key={k.l} onClick={()=>setNav((k as any).nav)} style={{...card(),padding:"20px 24px",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.8"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{k.l}</div>
                   <div style={{fontSize:28,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:2}}>{k.v}</div>
                   <div style={{fontSize:12,color:C.muted}}>{k.sub}</div>
@@ -427,7 +493,7 @@ export default function App() {
                         <div style={{fontSize:11,color:C.muted,marginLeft:38}}>{p.notes}</div>
                         {selProspect?.id===p.id&&(
                           <div style={{marginTop:10,marginLeft:38,display:"flex",gap:6}}>
-                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Je rédige un courrier personnalisé pour le propriétaire au ${p.adresse}, ${p.ville}. Score de probabilité : ${p.score}/100. ${p.notes}`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Courrier</button>
+                            <button onClick={e=>{e.stopPropagation();setCourrier({prospect:p,template:"prospection",content:"",loading:false});setNav("courriers");}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Courrier</button>
                             <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse complète du prospect au ${p.adresse} : score ${p.score}/100, acheté il y a ${(p as any).details?.anciennete_ans||"?"} ans. Quelle stratégie de contact recommandes-tu ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Analyser</button>
                           </div>
                         )}
@@ -641,6 +707,273 @@ export default function App() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ESTIMATION */}
+        {nav==="estimation"&&(
+          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            {/* LEFT: form */}
+            <div style={{width:320,borderRight:`1px solid ${C.border}`,background:C.surface,display:"flex",flexDirection:"column",flexShrink:0}}>
+              <div style={{padding:"20px 20px 16px",borderBottom:`1px solid ${C.border}`}}>
+                <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>Estimation</div>
+                <div style={{fontSize:12,color:C.muted}}>Avis de valeur basé sur les ventes DVF</div>
+              </div>
+              <div style={{flex:1,overflowY:"auto",padding:20,display:"flex",flexDirection:"column",gap:14}}>
+                {[{l:"Type de bien",k:"type",type:"select",opts:["Maison","Appartement"]},{l:"Surface habitable (m²)",k:"surface",type:"number",placeholder:"Ex: 120"},{l:"Ville ou code postal",k:"ville",type:"text",placeholder:"Ex: Bordeaux"},{l:"État général",k:"etat",type:"select",opts:["neuf","bon","moyen","travaux"]}].map(f=>(
+                  <div key={f.k}>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>{f.l}</div>
+                    {f.type==="select"?(
+                      <select value={(estForm as any)[f.k]} onChange={e=>setEstForm(x=>({...x,[f.k]:e.target.value}))} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13,cursor:"pointer"}}>
+                        {f.opts!.map(o=><option key={o} value={o} style={{background:C.card}}>{o.charAt(0).toUpperCase()+o.slice(1)}</option>)}
+                      </select>
+                    ):(
+                      <input type={f.type} value={(estForm as any)[f.k]} onChange={e=>setEstForm(x=>({...x,[f.k]:e.target.value}))} placeholder={(f as any).placeholder} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    )}
+                  </div>
+                ))}
+                {estError&&<div style={{fontSize:12,color:C.red,padding:"8px 12px",background:C.red+"10",borderRadius:8}}>{estError}</div>}
+                <button disabled={estLoading||!estForm.surface||!estForm.ville} onClick={async()=>{
+                  setEstLoading(true); setEstError(""); setEstResult(null);
+                  try {
+                    const r = await lancerEstimation(estForm.type, parseFloat(estForm.surface), estForm.ville, estForm.etat);
+                    setEstResult(r);
+                  } catch(e:any){setEstError(e.message);}
+                  setEstLoading(false);
+                }} style={{marginTop:8,background:estLoading||!estForm.surface||!estForm.ville?C.border:C.accent,color:estLoading||!estForm.surface||!estForm.ville?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:600,cursor:estLoading||!estForm.surface||!estForm.ville?"default":"pointer",transition:"all 0.15s"}}>
+                  {estLoading?"Analyse en cours...":"Estimer le bien"}
+                </button>
+              </div>
+            </div>
+            {/* RIGHT: result */}
+            <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.3s ease"}}>
+              {!estResult&&!estLoading&&(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.muted,textAlign:"center"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Remplissez le formulaire</div>
+                    <div style={{fontSize:12}}>L'estimation s'appuie sur les ventes réelles DVF dans un rayon de 5 km</div>
+                  </div>
+                </div>
+              )}
+              {estResult&&(
+                <>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:28}}>
+                    <div>
+                      <div style={{fontSize:12,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:500}}>Avis de valeur — {estResult.ville}</div>
+                      <div style={{fontSize:40,fontWeight:700,color:C.text,letterSpacing:"-0.04em",lineHeight:1}}>{fmt(estResult.estimation)} €</div>
+                      <div style={{fontSize:14,color:C.muted,marginTop:6}}>Fourchette {fmt(estResult.fourchette_bas)} — {fmt(estResult.fourchette_haut)} €</div>
+                    </div>
+                    <button onClick={()=>{
+                      const w = window.open("","_blank");
+                      if(!w) return;
+                      w.document.write(`<!DOCTYPE html><html><head><title>Avis de Valeur — ${estResult.ville}</title><style>body{font-family:-apple-system,sans-serif;max-width:700px;margin:40px auto;color:#111;line-height:1.5}h1{font-size:28px;font-weight:700;margin-bottom:4px}h2{font-size:16px;font-weight:600;margin:24px 0 10px}.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:24px}.card{border:1px solid #eee;border-radius:8px;padding:14px}.label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px}.val{font-size:18px;font-weight:700}.fourchette{background:#f5f5f5;border-radius:8px;padding:16px;margin-bottom:24px;display:flex;justify-content:space-between;align-items:center}table{width:100%;border-collapse:collapse}td,th{padding:8px 12px;border-bottom:1px solid #eee;font-size:12px}th{text-align:left;font-weight:600;color:#888;text-transform:uppercase;font-size:10px;letter-spacing:.06em}.footer{margin-top:40px;font-size:11px;color:#aaa;border-top:1px solid #eee;padding-top:12px}@media print{button{display:none}}</style></head><body>
+                      <h1>Avis de Valeur</h1><p style="color:#888">${estForm.type} · ${estForm.surface} m² · État ${estForm.etat} · ${estResult.ville}</p>
+                      <div class="fourchette"><div><div class="label">Estimation centrale</div><div style="font-size:32px;font-weight:700">${fmt(estResult.estimation)} €</div></div><div style="text-align:right"><div class="label">Fourchette</div><div style="font-size:20px;font-weight:600">${fmt(estResult.fourchette_bas)} — ${fmt(estResult.fourchette_haut)} €</div></div></div>
+                      <div class="grid"><div class="card"><div class="label">Prix/m² médian</div><div class="val">${fmt(estResult.prix_m2_median)} €/m²</div></div><div class="card"><div class="label">Comparables analysés</div><div class="val">${estResult.nb_comparables}</div></div><div class="card"><div class="label">Surface évaluée</div><div class="val">${estForm.surface} m²</div></div></div>
+                      <h2>Ventes comparables (DVF)</h2><table><tr><th>Adresse</th><th>Surface</th><th>Prix</th><th>€/m²</th><th>Date</th></tr>${estResult.comparables.map((c:any)=>`<tr><td>${c.adresse}</td><td>${c.surface}m²</td><td>${fmt(c.prix)}€</td><td>${fmt(c.prix_m2)}€</td><td>${c.date}</td></tr>`).join("")}</table>
+                      <div class="footer">Avis de valeur généré le ${new Date().toLocaleDateString("fr-FR")} · Source : DVF Etalab (données officielles) · ${agent.prenom} ${agent.nom} — ${agent.agence}</div>
+                      <script>window.print();</script></body></html>`);
+                      w.document.close();
+                    }} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer",flexShrink:0}}>
+                      Imprimer PDF
+                    </button>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:28}}>
+                    {[{l:"Prix/m² médian",v:fmt(estResult.prix_m2_median)+" €/m²"},{l:"Fourchette marché",v:`${fmt(estResult.prix_m2_min)} — ${fmt(estResult.prix_m2_max)} €/m²`},{l:"Comparables DVF",v:`${estResult.nb_comparables} ventes`}].map(i=>(
+                      <div key={i.l} style={{...card(),padding:"16px 20px"}}>
+                        <div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{i.l}</div>
+                        <div style={{fontSize:15,fontWeight:700,color:C.text}}>{i.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{...card(),padding:"24px"}}>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:16}}>Ventes comparables DVF</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 60px 90px 80px 80px",gap:8,marginBottom:8}}>
+                      {["Adresse","Surface","Prix","€/m²","Date"].map(h=><div key={h} style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</div>)}
+                    </div>
+                    {estResult.comparables.map((c:any,i:number)=>(
+                      <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 60px 90px 80px 80px",gap:8,padding:"10px 0",borderTop:`1px solid ${C.border}`}}>
+                        <div style={{fontSize:12,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.adresse}</div>
+                        <div style={{fontSize:12,color:C.muted}}>{c.surface}m²</div>
+                        <div style={{fontSize:12,color:C.text,fontWeight:500}}>{fmt(c.prix)}€</div>
+                        <div style={{fontSize:12,color:C.text}}>{fmt(c.prix_m2)}</div>
+                        <div style={{fontSize:12,color:C.muted}}>{c.date}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* COMPTABILITÉ */}
+        {nav==="compta"&&(()=>{
+          const total = transacs.reduce((a,t)=>a+t.montant,0);
+          const encaisse = transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0);
+          const attente = transacs.filter(t=>t.statut==="en_attente").reduce((a,t)=>a+t.montant,0);
+          return(
+            <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.3s ease"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:32}}>
+                <div>
+                  <h1 style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em",marginBottom:6}}>Comptabilité</h1>
+                  <p style={{color:C.muted,fontSize:15}}>Suivi des honoraires</p>
+                </div>
+                <button onClick={()=>{
+                  const rows = transacs.map(t=>`"${t.label}","${t.adresse}","${t.montant}","${t.statut}","${t.date_encaissement}"`).join("\n");
+                  const blob = new Blob([`Mandat,Adresse,Honoraires,Statut,Date\n${rows}`],{type:"text/csv"});
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a"); a.href=url; a.download="honoraires-mandatly.csv"; a.click();
+                }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 16px",fontSize:13,color:C.text,cursor:"pointer",fontWeight:500}}>
+                  Exporter CSV
+                </button>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:32}}>
+                {[{l:"CA prévisionnel",v:fmt(total)+" €",c:C.text},{l:"Encaissé",v:fmt(encaisse)+" €",c:C.green},{l:"En attente",v:fmt(attente)+" €",c:C.amber}].map(k=>(
+                  <div key={k.l} style={{...card(),padding:"20px 24px"}}>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{k.l}</div>
+                    <div style={{fontSize:28,fontWeight:700,color:k.c,letterSpacing:"-0.02em"}}>{k.v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{...card()}}>
+                <div style={{padding:"16px 24px",borderBottom:`1px solid ${C.border}`,display:"grid",gridTemplateColumns:"1fr 1fr 110px 120px 140px",gap:12}}>
+                  {["Mandat","Adresse","Honoraires","Statut","Action"].map(h=>(
+                    <div key={h} style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</div>
+                  ))}
+                </div>
+                {transacs.map((t,i)=>(
+                  <div key={t.id} style={{padding:"16px 24px",borderBottom:i<transacs.length-1?`1px solid ${C.border}`:"none",display:"grid",gridTemplateColumns:"1fr 1fr 110px 120px 140px",gap:12,alignItems:"center"}}>
+                    <div style={{fontSize:13,fontWeight:500,color:C.text}}>{t.label}</div>
+                    <div style={{fontSize:12,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.adresse}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{fmt(t.montant)} €</div>
+                    <div>
+                      <span style={{background:t.statut==="encaisse"?C.green+"15":t.statut==="annule"?C.red+"15":C.amber+"15",color:t.statut==="encaisse"?C.green:t.statut==="annule"?C.red:C.amber,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:600}}>
+                        {t.statut==="encaisse"?"Encaissé":t.statut==="annule"?"Annulé":"En attente"}
+                      </span>
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
+                      {t.statut==="en_attente"&&(
+                        <button onClick={()=>setTransacs(ts=>ts.map(x=>x.id===t.id?{...x,statut:"encaisse",date_encaissement:new Date().toLocaleDateString("fr-FR")}:x))} style={{background:C.green+"15",color:C.green,border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Encaisser</button>
+                      )}
+                      {t.statut!=="annule"&&(
+                        <button onClick={()=>setTransacs(ts=>ts.map(x=>x.id===t.id?{...x,statut:"annule"}:x))} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px",fontSize:11,color:C.muted,cursor:"pointer"}}>Annuler</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+                <button onClick={()=>{
+                  const nm = mandats.find(m=>!transacs.find(t=>t.mandat_id===m.id));
+                  if(!nm) return;
+                  setTransacs(ts=>[...ts,{id:Date.now(),mandat_id:nm.id,label:nm.nom_propriete,adresse:`${nm.adresse}, ${nm.ville}`,montant:Math.round(nm.prix*nm.honoraires/100),statut:"en_attente",date_encaissement:""}]);
+                }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px",fontSize:13,color:C.muted,cursor:"pointer"}}>
+                  + Ajouter un mandat
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* COURRIERS */}
+        {nav==="courriers"&&(
+          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            {/* LEFT: prospects list */}
+            <div style={{width:300,borderRight:`1px solid ${C.border}`,background:C.surface,display:"flex",flexDirection:"column",flexShrink:0}}>
+              <div style={{padding:"20px",borderBottom:`1px solid ${C.border}`}}>
+                <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>Courriers</div>
+                <div style={{fontSize:12,color:C.muted}}>Prospection postale personnalisée</div>
+              </div>
+              <div style={{flex:1,overflowY:"auto"}}>
+                {prospects.length===0?(
+                  <div style={{padding:20,textAlign:"center",color:C.muted,fontSize:12}}>Lancez une prospection DVF pour voir les prospects</div>
+                ):(
+                  prospects.map(p=>{
+                    const col=p.score>=85?C.green:p.score>=70?C.amber:C.red;
+                    const sel=courrier?.prospect?.id===p.id;
+                    return(
+                      <div key={p.id} onClick={()=>setCourrier({prospect:p,template:"prospection",content:"",loading:false})} style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:sel?C.accentBg:"transparent",transition:"background 0.15s"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{width:26,height:26,borderRadius:6,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
+                            <div style={{fontSize:11,color:C.muted}}>{p.ville}</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            {/* RIGHT: courrier composer */}
+            <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.3s ease"}}>
+              {!courrier?(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.muted,textAlign:"center"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Sélectionnez un prospect</div>
+                    <div style={{fontSize:12}}>Mandatly génère un courrier personnalisé via DVF</div>
+                  </div>
+                </div>
+              ):(
+                <>
+                  <div style={{marginBottom:24}}>
+                    <div style={{fontSize:20,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>{courrier.prospect.adresse}</div>
+                    <div style={{fontSize:13,color:C.muted}}>{courrier.prospect.ville} · Score {courrier.prospect.score}/100</div>
+                  </div>
+                  <div style={{marginBottom:20}}>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Type de courrier</div>
+                    <div style={{display:"flex",gap:8}}>
+                      {[{id:"prospection",l:"Prospection initiale",d:"Premier contact propriétaire"},{id:"relance",l:"Relance",d:"Suivi après 3 semaines"},{id:"offre",l:"Offre d'achat",d:"Proposition d'un acheteur"}].map(t=>(
+                        <div key={t.id} onClick={()=>setCourrier(c=>c?{...c,template:t.id,content:""}:null)} style={{flex:1,padding:"12px 14px",background:courrier.template===t.id?C.accentBg:C.card,border:`1px solid ${courrier.template===t.id?C.border2:C.border}`,borderRadius:10,cursor:"pointer",transition:"all 0.15s"}}>
+                          <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:3}}>{t.l}</div>
+                          <div style={{fontSize:11,color:C.muted}}>{t.d}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button disabled={courrier.loading} onClick={async()=>{
+                    setCourrier(c=>c?{...c,loading:true,content:""}:null);
+                    const templates:Record<string,string> = {
+                      prospection:`Rédige un courrier de prospection immobilière pour un propriétaire habitant au ${courrier.prospect.adresse}, ${courrier.prospect.ville}. Le bien a été acheté il y a environ ${(courrier.prospect as any).anciennete||"plusieurs"} années. ${courrier.prospect.notes}. Ton nom est ${agent.prenom} ${agent.nom} de ${agent.agence}. Sois professionnel, personnalisé, 3 paragraphes maximum. Commence directement par la lettre (Madame, Monsieur,...).`,
+                      relance:`Rédige un courrier de relance pour un propriétaire au ${courrier.prospect.adresse}, ${courrier.prospect.ville} que j'ai déjà contacté il y a 3 semaines sans réponse. ${courrier.prospect.notes}. Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Bref et percutant, 2 paragraphes.`,
+                      offre:`Rédige un courrier informant le propriétaire au ${courrier.prospect.adresse}, ${courrier.prospect.ville} qu'un acheteur sérieux recherche exactement son type de bien dans ce secteur. ${courrier.prospect.notes}. Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}.`,
+                    };
+                    try {
+                      const res = await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+                        system:`Tu es un assistant immobilier expert en rédaction de courriers de prospection. Réponds uniquement avec le texte du courrier, sans introduction ni explication.`,
+                        messages:[{role:"user",content:templates[courrier.template]}],
+                        max_tokens:600
+                      })});
+                      const d = await res.json();
+                      setCourrier(c=>c?{...c,loading:false,content:d.content?.[0]?.text||"Erreur"}:null);
+                    } catch {
+                      setCourrier(c=>c?{...c,loading:false,content:"Erreur de connexion"}:null);
+                    }
+                  }} style={{marginBottom:20,background:courrier.loading?C.border:C.accent,color:courrier.loading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"11px 20px",fontSize:13,fontWeight:600,cursor:courrier.loading?"default":"pointer",transition:"all 0.15s"}}>
+                    {courrier.loading?"Génération en cours...":"Générer avec Lucas"}
+                  </button>
+                  {courrier.content&&(
+                    <div style={{...card(),padding:"24px"}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                        <div style={{fontSize:13,fontWeight:600,color:C.text}}>Courrier généré</div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={()=>navigator.clipboard.writeText(courrier.content)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.muted,cursor:"pointer"}}>Copier</button>
+                          <button onClick={()=>{
+                            const w=window.open("","_blank");
+                            if(!w) return;
+                            w.document.write(`<!DOCTYPE html><html><head><title>Courrier — ${courrier.prospect.adresse}</title><style>body{font-family:Georgia,serif;max-width:600px;margin:60px auto;color:#111;line-height:1.7;font-size:14px}pre{white-space:pre-wrap;font-family:inherit}@media print{button{display:none}}</style></head><body><pre>${courrier.content}</pre><br><br><p style="font-size:11px;color:#888">Généré le ${new Date().toLocaleDateString("fr-FR")} par Mandatly · ${agent.prenom} ${agent.nom} — ${agent.agence}</p><script>window.print();</script></body></html>`);
+                            w.document.close();
+                          }} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Imprimer</button>
+                        </div>
+                      </div>
+                      <div style={{fontSize:13,color:C.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{courrier.content}</div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
