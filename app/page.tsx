@@ -594,40 +594,72 @@ export default function App() {
             </div>
             {selM?(
               <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.25s ease"}}>
-                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:28}}>
-                  <div>
-                    <h2 style={{fontSize:26,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>{selM.nom_propriete}</h2>
-                    <p style={{fontSize:14,color:C.muted}}>{selM.adresse}, {selM.ville}</p>
-                  </div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),ville:selM.ville,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
-                    <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Préparation de la signature Yousign pour ${selM.nom_propriete}. Envoi à ${selM.proprietaire} (${selM.email}). Confirmation ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 14px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Yousign</button>
-                    <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Rédaction d'un email pour ${selM.proprietaire} concernant ${selM.nom_propriete}. Quel est l'objet ?`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"8px 14px",fontSize:12,cursor:"pointer",fontWeight:500}}>Email</button>
-                  </div>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:24}}>
-                  {[{l:"Prix",v:fmt(selM.prix)+" €"},{l:"Surface",v:selM.surface+"m²"},{l:"Terrain",v:selM.terrain?selM.terrain+"m²":"—"},{l:"Chambres",v:String(selM.chambres)},{l:"DPE",v:"Classe "+selM.dpe},{l:"Type",v:selM.type},{l:"Honoraires",v:selM.honoraires+"%"},{l:"Mandat",v:selM.exclusif?"Exclusif":"Simple"}].map(i=>(
-                    <div key={i.l} style={{...card(),padding:"14px 16px"}}>
-                      <div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{i.l}</div>
-                      <div style={{fontSize:14,fontWeight:600,color:C.text}}>{i.v}</div>
+                {/* Helper: editable field */}
+                {(()=>{
+                  const upd = (k:string,v:any)=>{const nm={...selM,[k]:v};setMandats(ms=>ms.map(m=>m.id===selM.id?nm:m));setSelM(nm);};
+                  const inp = (k:string,type="text",label="") => (
+                    <div>
+                      {label&&<div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:5}}>{label}</div>}
+                      <input type={type} value={(selM as any)[k]||""} onChange={e=>upd(k,type==="number"?Number(e.target.value):e.target.value)} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
                     </div>
-                  ))}
-                </div>
-                <div style={{...card(),padding:"24px",marginBottom:16}}>
-                  <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:14}}>Propriétaire</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
-                    {[{l:"Nom",v:selM.proprietaire},{l:"Téléphone",v:selM.tel},{l:"Email",v:selM.email}].map(i=>(
-                      <div key={i.l}>
-                        <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>{i.l}</div>
-                        <div style={{fontSize:13,color:C.text}}>{i.v||"—"}</div>
+                  );
+                  return (
+                    <>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:24}}>
+                        <div style={{flex:1,marginRight:20}}>
+                          <input value={selM.nom_propriete} onChange={e=>upd("nom_propriete",e.target.value)} style={{fontSize:24,fontWeight:700,color:C.text,letterSpacing:"-0.02em",background:"transparent",border:"none",width:"100%",marginBottom:4,padding:0}} onFocus={e=>e.target.style.borderBottom=`1px solid ${C.border}`} onBlur={e=>e.target.style.borderBottom="none"}/>
+                          <div style={{fontSize:13,color:C.muted}}>{selM.adresse}, {selM.ville}</div>
+                        </div>
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}}>
+                          <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),ville:selM.ville,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
+                          <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Rédaction d'un email pour ${selM.proprietaire} concernant ${selM.nom_propriete}.`}]);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Email</button>
+                          <button onClick={()=>{if(confirm(`Supprimer ${selM.nom_propriete} ?`)){setMandats(ms=>ms.filter(m=>m.id!==selM.id));setSelM(null);}}} style={{background:C.red+"15",color:C.red,border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Supprimer</button>
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{...card(),padding:"24px"}}>
-                  <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:10}}>Description</div>
-                  <p style={{fontSize:13,color:C.muted,lineHeight:1.7}}>{selM.description||"Aucune description."}</p>
-                </div>
+                      <div style={{...card(),padding:"20px",marginBottom:16}}>
+                        <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:14}}>Informations du bien</div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+                          {inp("prix","number","Prix (€)")}
+                          {inp("surface","number","Surface (m²)")}
+                          {inp("terrain","number","Terrain (m²)")}
+                          {inp("chambres","number","Chambres")}
+                          <div>
+                            <div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:5}}>Type</div>
+                            <select value={selM.type} onChange={e=>upd("type",e.target.value)} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,cursor:"pointer"}}>
+                              {["Maison","Appartement","Local commercial","Terrain"].map(t=><option key={t} value={t} style={{background:C.card}}>{t}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:5}}>DPE</div>
+                            <select value={selM.dpe} onChange={e=>upd("dpe",e.target.value)} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,cursor:"pointer"}}>
+                              {["A","B","C","D","E","F","G"].map(d=><option key={d} value={d} style={{background:C.card}}>{d}</option>)}
+                            </select>
+                          </div>
+                          {inp("honoraires","number","Honoraires (%)")}
+                          <div>
+                            <div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:5}}>Mandat</div>
+                            <select value={selM.exclusif?"exclusif":"simple"} onChange={e=>upd("exclusif",e.target.value==="exclusif")} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,cursor:"pointer"}}>
+                              <option value="exclusif" style={{background:C.card}}>Exclusif</option>
+                              <option value="simple" style={{background:C.card}}>Simple</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{...card(),padding:"20px",marginBottom:16}}>
+                        <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:14}}>Propriétaire</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+                          {inp("proprietaire","text","Nom")}
+                          {inp("tel","text","Téléphone")}
+                          {inp("email","email","Email")}
+                        </div>
+                      </div>
+                      <div style={{...card(),padding:"20px"}}>
+                        <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:10}}>Description</div>
+                        <textarea value={selM.description||""} onChange={e=>upd("description",e.target.value)} rows={4} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:13,lineHeight:1.6,resize:"vertical"}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             ):(
               <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted}}>
