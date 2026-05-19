@@ -420,28 +420,53 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20}}>
               <div style={{...card(),padding:"24px"}}>
-                <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:16,letterSpacing:"-0.01em"}}>Mandats récents</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>Mandats</div>
+                  <button onClick={()=>setNav("mandats")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Voir tout →</button>
+                </div>
                 {mandats.map((m,i)=>(
-                  <div key={m.id} onClick={()=>{setNav("mandats");setSelM(m);}} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<mandats.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
+                  <div key={m.id} onClick={()=>{setNav("mandats");setSelM(m);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<mandats.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
+                    <div style={{width:6,height:6,borderRadius:"50%",background:PIPELINE_COLS.find(p=>p.id===m.pipeline)?.color||C.muted,flexShrink:0}}/>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.nom_propriete}</div>
-                      <div style={{fontSize:12,color:C.muted}}>{m.proprietaire}</div>
+                      <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.nom_propriete}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{m.proprietaire}</div>
                     </div>
-                    <div style={{fontSize:13,fontWeight:600,color:C.text,flexShrink:0}}>{fmt(m.prix)} €</div>
+                    <div style={{fontSize:12,fontWeight:600,color:C.text,flexShrink:0}}>{fmt(m.prix)}€</div>
                   </div>
                 ))}
               </div>
               <div style={{...card(),padding:"24px"}}>
-                <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:16}}>Prochains rendez-vous</div>
-                {rdvs.map((r,i)=>(
-                  <div key={r.id} style={{display:"flex",gap:14,padding:"10px 0",borderBottom:i<rdvs.length-1?`1px solid ${C.border}`:"none"}}>
-                    <div style={{width:3,height:"100%",minHeight:40,borderRadius:2,background:r.type==="visite"?C.green:C.amber,flexShrink:0,alignSelf:"stretch"}}/>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>Prospects prioritaires</div>
+                  <button onClick={()=>setNav("prospects")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Prospecter →</button>
+                </div>
+                {prospects.filter(p=>p.score>=75).slice(0,5).map((p,i,arr)=>{
+                  const col=p.score>=85?C.green:C.amber;
+                  return(
+                    <div key={p.id} onClick={()=>{setNav("prospects");setSelProspect(p as any);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
+                      <div style={{width:24,height:24,borderRadius:5,background:col+"15",border:`1px solid ${col}20`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
+                        <div style={{fontSize:11,color:C.muted}}>{p.source}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {prospects.filter(p=>p.score>=75).length===0&&<div style={{fontSize:12,color:C.muted,textAlign:"center",paddingTop:16}}>Lancez une prospection DVF</div>}
+              </div>
+              <div style={{...card(),padding:"24px"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>Agenda</div>
+                  <button onClick={()=>setNav("agenda")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Voir tout →</button>
+                </div>
+                {rdvs.sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4).map((r,i,arr)=>(
+                  <div key={r.id} style={{display:"flex",gap:12,padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${C.border}`:"none"}}>
+                    <div style={{width:3,minHeight:36,borderRadius:2,background:r.type==="visite"?C.green:r.type==="signature"?C.amber:C.blue,flexShrink:0,alignSelf:"stretch"}}/>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:500,color:C.text}}>{r.titre}</div>
-                      <div style={{fontSize:12,color:C.muted}}>{r.client}</div>
-                      <div style={{fontSize:11,color:C.muted,marginTop:2}}>{new Date(r.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})} · {r.heure}</div>
+                      <div style={{fontSize:12,fontWeight:500,color:C.text,marginBottom:1}}>{r.titre}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{new Date(r.date+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})} · {r.heure}</div>
                     </div>
                   </div>
                 ))}
@@ -1220,8 +1245,8 @@ export default function App() {
                 <div style={{fontSize:13,fontWeight:600,color:C.text}}>{agent.prenom} {agent.nom}</div>
                 <div style={{fontSize:12,color:C.muted}}>{agent.agence}</div>
               </div>
-              {[["Tableau de bord",""],["Comptabilité",""],["Mon agence",""],["Paramètres",""]].map(([l])=>(
-                <button key={l} onClick={()=>setProfile(false)} style={{width:"100%",display:"flex",padding:"8px 14px",background:"none",border:"none",color:C.text,fontSize:13,textAlign:"left",borderRadius:8,cursor:"pointer"}}>
+              {[["Tableau de bord","dashboard"],["Prospection","prospects"],["Mandats","mandats"],["Comptabilité","compta"],["Estimation","estimation"],["Courriers","courriers"],["Agenda","agenda"]].map(([l,id])=>(
+                <button key={l} onClick={()=>{setNav(id);setProfile(false);}} style={{width:"100%",display:"flex",padding:"8px 14px",background:"none",border:"none",color:C.text,fontSize:13,textAlign:"left",borderRadius:8,cursor:"pointer"}}>
                   {l}
                 </button>
               ))}
