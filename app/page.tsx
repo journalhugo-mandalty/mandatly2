@@ -176,6 +176,11 @@ export default function App() {
   // Merci Facteur envoi en cours
   const [mfSending, setMfSending] = useState(false);
   const [mfResult, setMfResult] = useState<{ok:number;err:number}|null>(null);
+  // Veille concurrence
+  const [annonceVille, setAnnonceVille] = useState("");
+  const [annonces, setAnnonces] = useState<any[]>([]);
+  const [annoncesLoading, setAnnoncesLoading] = useState(false);
+  const [annoncesError, setAnnoncesError] = useState("");
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
@@ -410,7 +415,7 @@ export default function App() {
   );
 
   // MAIN APP
-  const NAVS = [{id:"dashboard",label:"Vue d'ensemble"},{id:"prospects",label:"Prospection"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
+  const NAVS = [{id:"dashboard",label:"Vue d'ensemble"},{id:"prospects",label:"Prospection"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:BODY,color:C.text,overflow:"hidden"}}>
@@ -1501,6 +1506,159 @@ export default function App() {
                       </div>
                     );
                   })()}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* VEILLE CONCURRENCE */}
+        {nav==="veille"&&(
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            {/* Header + search */}
+            <div style={{padding:"20px 28px",borderBottom:`1px solid ${C.border}`,flexShrink:0,background:C.surface}}>
+              <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+                <div>
+                  <h1 style={{fontSize:22,fontWeight:600,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>Veille concurrence</h1>
+                  <div style={{fontSize:13,color:C.muted}}>Annonces en vente sur votre secteur · Source : Bien'ici</div>
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <input value={annonceVille} onChange={e=>setAnnonceVille(e.target.value)} onKeyDown={async e=>{
+                    if(e.key!=="Enter"||!annonceVille.trim()||annoncesLoading) return;
+                    setAnnoncesLoading(true); setAnnoncesError(""); setAnnonces([]);
+                    try{
+                      const r = await fetch(`/api/annonces?ville=${encodeURIComponent(annonceVille)}&size=60`);
+                      const d = await r.json();
+                      if(d.error) throw new Error(d.error);
+                      setAnnonces(d.annonces||[]);
+                    }catch(err:any){setAnnoncesError(err.message||"Erreur");}
+                    setAnnoncesLoading(false);
+                  }} placeholder="Ex : Bordeaux, Mérignac..." style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 14px",fontSize:13,width:220}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <button disabled={annoncesLoading||!annonceVille.trim()} onClick={async()=>{
+                    if(!annonceVille.trim()||annoncesLoading) return;
+                    setAnnoncesLoading(true); setAnnoncesError(""); setAnnonces([]);
+                    try{
+                      const r = await fetch(`/api/annonces?ville=${encodeURIComponent(annonceVille)}&size=60`);
+                      const d = await r.json();
+                      if(d.error) throw new Error(d.error);
+                      setAnnonces(d.annonces||[]);
+                    }catch(err:any){setAnnoncesError(err.message||"Erreur");}
+                    setAnnoncesLoading(false);
+                  }} style={{background:annoncesLoading?C.border:C.accent,color:annoncesLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:annoncesLoading?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
+                    {annoncesLoading?"...":"Analyser"}
+                  </button>
+                </div>
+              </div>
+              {annoncesError&&<div style={{fontSize:12,color:C.red,marginTop:8}}>{annoncesError}</div>}
+              {annonces.length>0&&(
+                <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap"}}>
+                  <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px"}}>
+                    <span style={{fontWeight:600,color:C.text}}>{annonces.length}</span> annonces trouvées
+                  </div>
+                  <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px"}}>
+                    <span style={{fontWeight:600,color:C.text}}>{annonces.filter(a=>a.type==="Maison").length}</span> maisons
+                  </div>
+                  <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px"}}>
+                    <span style={{fontWeight:600,color:C.text}}>{annonces.filter(a=>a.type==="Appartement").length}</span> appartements
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Content */}
+            <div style={{flex:1,overflowY:"auto",padding:"24px 28px"}}>
+              {annoncesLoading?(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:200}}>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontFamily:DISPLAY,fontSize:20,fontStyle:"italic",color:C.text,marginBottom:8}}>Chargement des annonces...</div>
+                    <div style={{fontSize:12,color:C.muted}}>Bien'ici · Votre secteur</div>
+                  </div>
+                </div>
+              ):annonces.length===0?(
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:60}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:22,fontStyle:"italic",color:C.text,marginBottom:8,textAlign:"center"}}>Aucune annonce</div>
+                  <div style={{fontSize:13,color:C.muted,marginBottom:32,textAlign:"center"}}>Entrez une ville pour voir les biens actuellement en vente</div>
+                  {/* Portal links */}
+                  <div style={{width:"100%",maxWidth:560}}>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Autres portails</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                      {[
+                        {name:"SeLoger",url:"https://www.seloger.com/list.htm?types=2,4&projects=2&enterprise=0&natures=1,2,4&places=%5B{inseeCodes:['VILLE']}%5D"},
+                        {name:"Bien'ici",url:"https://www.bienici.com/recherche/achat/france"},
+                        {name:"Barnes",url:"https://www.barnesparis.com/fr/nos-biens/vente/residentiels"},
+                        {name:"Belle Demeure",url:"https://www.belledemeure.com/annonces/vente/maison/"},
+                        {name:"Sotheby's",url:"https://www.sothebysrealty.com/fre/rechercher/FRA/vente"},
+                        {name:"PAP",url:"https://www.pap.fr/annonce/ventes-maisons-appartements"},
+                      ].map(p=>(
+                        <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"10px 14px",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,fontSize:13,color:C.text,textDecoration:"none",fontWeight:500,transition:"all 0.15s"}}>
+                          {p.name} →
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ):(
+                <>
+                  {/* Grid */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:24}}>
+                    {annonces.map(a=>(
+                      <div key={a.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s"}}>
+                        {/* Photo or placeholder */}
+                        {a.photos?.[0]?(
+                          <div style={{height:160,background:`url(${a.photos[0]}) center/cover no-repeat`,flexShrink:0}}/>
+                        ):(
+                          <div style={{height:160,background:C.surface,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            <span style={{fontSize:11,color:C.muted}}>Pas de photo</span>
+                          </div>
+                        )}
+                        <div style={{padding:"14px 16px"}}>
+                          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8,marginBottom:6}}>
+                            <div>
+                              <div style={{fontSize:15,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>
+                                {a.prix ? `${a.prix.toLocaleString("fr-FR")} €` : "Prix non communiqué"}
+                              </div>
+                              <div style={{fontSize:12,color:C.muted,marginTop:2}}>
+                                {a.surface ? `${a.surface} m²` : "?"}{a.pieces ? ` · ${a.pieces} p.` : ""}
+                              </div>
+                            </div>
+                            <span style={{fontSize:10,background:a.type==="Maison"?C.green+"18":C.blue+"15",color:a.type==="Maison"?C.green:C.blue,border:`1px solid ${a.type==="Maison"?C.green+"35":C.blue+"30"}`,borderRadius:5,padding:"2px 7px",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+                              {a.type}
+                            </span>
+                          </div>
+                          <div style={{fontSize:12,color:C.muted,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                            {a.ville}{a.cp ? ` ${a.cp}` : ""}
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                            <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
+                              {a.agence || "Particulier"}
+                            </div>
+                            {a.url&&(
+                              <a href={a.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:C.accent,fontWeight:600,textDecoration:"none",flexShrink:0,marginLeft:8}}>
+                                Voir →
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Portal links bar */}
+                  <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Portails concurrents à surveiller</div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {[
+                        {name:"Barnes",url:`https://www.barnesparis.com/fr/nos-biens/vente/residentiels?query=${encodeURIComponent(annonceVille)}`},
+                        {name:"Belle Demeure",url:`https://www.belledemeure.com/annonces/vente/?localisation=${encodeURIComponent(annonceVille)}`},
+                        {name:"Sotheby's",url:`https://www.sothebysrealty.com/fre/rechercher/FRA/vente?q=${encodeURIComponent(annonceVille)}`},
+                        {name:"SeLoger",url:`https://www.seloger.com/list.htm?types=2,4&projects=2&enterprise=0&natures=1,2,4&localisation=${encodeURIComponent(annonceVille)}`},
+                        {name:"PAP",url:`https://www.pap.fr/annonce/ventes-maisons-appartements-${annonceVille.toLowerCase().replace(/\s+/g,"-")}`},
+                      ].map(p=>(
+                        <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:C.text,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",textDecoration:"none",fontWeight:500}}>
+                          {p.name} →
+                        </a>
+                      ))}
+                    </div>
+                  </div>
                 </>
               )}
             </div>
