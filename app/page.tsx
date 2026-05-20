@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
+import { getSupabase } from "../lib/supabase";
 
 const MapComponent = lazy(() => import("./map-component"));
 
@@ -168,7 +169,8 @@ async function lancerEstimation(type: string, surface: number, ville: string, et
   };
 }
 
-type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; };
+type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; signature_request_id?:string; signature_status?:string; };
+type SignatureState = { loading:boolean; url?:string; error?:string; sandbox?:boolean; };
 type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; };
 type Acheteur = { id:number; nom:string; email:string; tel:string; budget_min:number; budget_max:number; surface_min:number; chambres_min:number; types:string[]; villes:string[]; notes:string; };
 type RDV = { id:number; titre:string; client:string; tel:string; date:string; heure:string; duree:number; type:string; bien:string; };
@@ -257,8 +259,16 @@ export default function App() {
   const [propData, setPropData] = useState<Record<string,any>>({});
   const [propLoading, setPropLoading] = useState<string|null>(null);
   // Email modal
-  type EmailModal = {to:string; sujet:string; corps:string; loading:boolean};
+  type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
+  // Supabase auth
+  const [user, setUser] = useState<any>(null);
+  const [authModal, setAuthModal] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authMsg, setAuthMsg] = useState("");
+  // Yousign signature
+  const [sigState, setSigState] = useState<Record<number,SignatureState>>({});
   const AGENT_DEFAULT = {prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"};
   const [agent, setAgent] = useState(()=>{
     if(typeof window==="undefined") return AGENT_DEFAULT;
@@ -275,6 +285,48 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("m_acheteurs",JSON.stringify(acheteurs));},[acheteurs]);
   useEffect(()=>{localStorage.setItem("m_rdvs",JSON.stringify(rdvs));},[rdvs]);
   useEffect(()=>{localStorage.setItem("m_courriers",JSON.stringify(courrierHisto));},[courrierHisto]);
+
+  // Supabase: init auth listener + load data on login
+  useEffect(()=>{
+    const sb = getSupabase();
+    if(!sb) return;
+    sb.auth.getUser().then(({data:{user}})=>{
+      if(user){ setUser(user); loadSupabase(sb, user.id); }
+    });
+    const {data:{subscription}} = sb.auth.onAuthStateChange((_,session)=>{
+      const u = session?.user ?? null;
+      setUser(u);
+      if(u) loadSupabase(sb, u.id);
+    });
+    return ()=>subscription.unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  async function loadSupabase(sb: NonNullable<ReturnType<typeof getSupabase>>, userId: string) {
+    const {data} = await sb.from("user_data").select("*").eq("user_id", userId).single();
+    if(!data) return;
+    if(data.mandats?.length) setMandats(data.mandats);
+    if(data.acheteurs?.length) setAcheteurs(data.acheteurs);
+    if(data.rdvs?.length) setRdvs(data.rdvs);
+    if(data.transacs?.length) setTransacs(data.transacs);
+    if(data.courriers?.length) setCourrierHisto(data.courriers);
+    if(data.agent?.prenom) setAgent(data.agent);
+  }
+
+  // Supabase: debounced sync on any data change
+  const syncTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
+  useEffect(()=>{
+    const sb = getSupabase();
+    if(!sb||!user) return;
+    if(syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(async()=>{
+      await sb.from("user_data").upsert({
+        user_id: user.id, mandats, acheteurs, rdvs, transacs,
+        courriers: courrierHisto, agent, updated_at: new Date().toISOString()
+      });
+    }, 1500);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[mandats, acheteurs, rdvs, transacs, courrierHisto, agent]);
 
   const C = dark ? {
     bg:"#080808",surface:"#0F0F0F",card:"#141414",border:"#1C1C1C",border2:"#242424",
@@ -434,6 +486,17 @@ export default function App() {
           ))}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {getSupabase()&&(
+            user?(
+              <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",background:C.green+"15",border:`1px solid ${C.green}25`,borderRadius:8}}>
+                <div style={{width:6,height:6,borderRadius:"50%",background:C.green}}/>
+                <span style={{fontSize:11,color:C.green,fontWeight:500}}>{user.email?.split("@")[0]}</span>
+                <button onClick={async()=>{const sb=getSupabase();if(sb){await sb.auth.signOut();setUser(null);}}} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",marginLeft:2}}>×</button>
+              </div>
+            ):(
+              <button onClick={()=>setAuthModal(true)} style={{padding:"5px 12px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.muted,cursor:"pointer",fontWeight:500}}>Connexion</button>
+            )
+          )}
           <button onClick={()=>setChat(o=>!o)} style={{padding:"6px 14px",background:chat?C.accentBg:C.surface,border:`1px solid ${chat?C.border2:C.border}`,borderRadius:8,color:chat?C.text:C.muted,fontSize:13,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:C.green,animation:"pulse 2s infinite"}}/>
             {agent.prenom||"Agent IA"}
@@ -774,9 +837,47 @@ export default function App() {
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}}>
                           <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),ville:selM.ville,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
                           <button onClick={()=>setEmailModal({to:selM.email,sujet:`${selM.nom_propriete} — `,corps:"",loading:false})} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Email</button>
+                          {(()=>{
+                            const sig = sigState[selM.id];
+                            const signed = selM.signature_status==="done";
+                            return(
+                              <button disabled={sig?.loading||signed} onClick={async()=>{
+                                if(signed) return;
+                                setSigState(s=>({...s,[selM.id]:{loading:true}}));
+                                try{
+                                  const r=await fetch("/api/yousign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mandat:selM})});
+                                  const d=await r.json();
+                                  if(d.error){setSigState(s=>({...s,[selM.id]:{loading:false,error:d.error}}));}
+                                  else{
+                                    setSigState(s=>({...s,[selM.id]:{loading:false,url:d.signing_url,sandbox:d.sandbox}}));
+                                    const nm={...selM,signature_request_id:d.signature_request_id,signature_status:"pending"};
+                                    setMandats(ms=>ms.map(m=>m.id===selM.id?nm:m));setSelM(nm);
+                                  }
+                                }catch(e:any){setSigState(s=>({...s,[selM.id]:{loading:false,error:e.message}}));}
+                              }} style={{background:signed?C.green+"15":sig?.loading?C.border:C.purple+"15",color:signed?C.green:sig?.loading?C.muted:C.purple,border:`1px solid ${signed?C.green+"30":C.purple+"30"}`,borderRadius:8,padding:"7px 12px",fontSize:12,cursor:signed?"default":"pointer",fontWeight:500}}>
+                                {signed?"Signé":sig?.loading?"...":"Signer"}
+                              </button>
+                            );
+                          })()}
                           <button onClick={()=>{if(confirm(`Supprimer ${selM.nom_propriete} ?`)){setMandats(ms=>ms.filter(m=>m.id!==selM.id));setSelM(null);}}} style={{background:C.red+"15",color:C.red,border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Supprimer</button>
                         </div>
                       </div>
+                      {/* Yousign status banner */}
+                      {sigState[selM.id]&&(
+                        <div style={{marginBottom:16,padding:"12px 16px",background:sigState[selM.id].error?C.red+"10":C.purple+"10",border:`1px solid ${sigState[selM.id].error?C.red+"30":C.purple+"30"}`,borderRadius:10,display:"flex",alignItems:"center",gap:12}}>
+                          {sigState[selM.id].error?(
+                            <span style={{fontSize:12,color:C.red}}>{sigState[selM.id].error}</span>
+                          ):(
+                            <>
+                              <div style={{flex:1}}>
+                                <div style={{fontSize:12,fontWeight:600,color:C.purple,marginBottom:2}}>Demande de signature envoyée{sigState[selM.id].sandbox?" (sandbox)":""}</div>
+                                {sigState[selM.id].url&&<div style={{fontSize:11,color:C.muted,wordBreak:"break-all"}}>{sigState[selM.id].url}</div>}
+                              </div>
+                              {sigState[selM.id].url&&<a href={sigState[selM.id].url} target="_blank" rel="noopener" style={{background:C.purple,color:"#fff",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,textDecoration:"none",flexShrink:0}}>Signer →</a>}
+                            </>
+                          )}
+                        </div>
+                      )}
                       <div style={{...card(),padding:"20px",marginBottom:16}}>
                         <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:14}}>Informations du bien</div>
                         <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
@@ -1387,9 +1488,61 @@ export default function App() {
               {emailModal.corps&&(
                 <textarea value={emailModal.corps} onChange={e=>setEmailModal(x=>x?{...x,corps:e.target.value}:null)} rows={8} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"12px",fontSize:13,lineHeight:1.6,resize:"vertical",marginBottom:14}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
               )}
+              {emailModal.sendError&&<div style={{fontSize:12,color:C.red,background:C.red+"10",borderRadius:8,padding:"8px 12px",marginBottom:10}}>{emailModal.sendError}</div>}
+              {emailModal.sent&&<div style={{fontSize:12,color:C.green,background:C.green+"10",borderRadius:8,padding:"8px 12px",marginBottom:10}}>Email envoyé.</div>}
               <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-                {emailModal.corps&&<button onClick={()=>{const m=`mailto:${emailModal.to}?subject=${encodeURIComponent(emailModal.sujet)}&body=${encodeURIComponent(emailModal.corps)}`;window.open(m);}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Ouvrir dans messagerie</button>}
+                {emailModal.corps&&(
+                  <button disabled={emailModal.sending} onClick={async()=>{
+                    setEmailModal(x=>x?{...x,sending:true,sent:false,sendError:undefined}:null);
+                    try{
+                      const r=await fetch("/api/email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({to:emailModal.to,sujet:emailModal.sujet,corps:emailModal.corps})});
+                      const d=await r.json();
+                      if(d.error)setEmailModal(x=>x?{...x,sending:false,sendError:d.error}:null);
+                      else setEmailModal(x=>x?{...x,sending:false,sent:true}:null);
+                    }catch(e:any){setEmailModal(x=>x?{...x,sending:false,sendError:e.message}:null);}
+                  }} style={{background:emailModal.sending?C.border:C.green,color:emailModal.sending?C.muted:"#fff",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:emailModal.sending?"default":"pointer"}}>
+                    {emailModal.sending?"Envoi...":"Envoyer"}
+                  </button>
+                )}
+                {emailModal.corps&&<button onClick={()=>{const m=`mailto:${emailModal.to}?subject=${encodeURIComponent(emailModal.sujet)}&body=${encodeURIComponent(emailModal.corps)}`;window.open(m);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",fontSize:13,color:C.text,cursor:"pointer"}}>Messagerie</button>}
                 {emailModal.corps&&<button onClick={()=>navigator.clipboard.writeText(emailModal!.corps)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",fontSize:13,color:C.text,cursor:"pointer"}}>Copier</button>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* AUTH MODAL */}
+        {authModal&&(
+          <div onClick={()=>{setAuthModal(false);setAuthMsg("");setAuthEmail("");}} style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div onClick={e=>e.stopPropagation()} style={{width:400,background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:28,boxShadow:`0 24px 64px ${C.shadow}`,animation:"fadeUp 0.2s ease"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+                <div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Connexion</div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>Synchronisez vos données sur tous vos appareils</div>
+                </div>
+                <button onClick={()=>setAuthModal(false)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
+              </div>
+              <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Email</div>
+              <input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="votre@email.fr" onKeyDown={e=>e.key==="Enter"&&!authLoading&&document.getElementById("auth-btn")?.click()} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:13,marginBottom:12}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+              {authMsg&&<div style={{fontSize:12,color:authMsg.includes("erreur")||authMsg.includes("Erreur")?C.red:C.green,background:(authMsg.includes("erreur")||authMsg.includes("Erreur")?C.red:C.green)+"10",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{authMsg}</div>}
+              <button id="auth-btn" disabled={authLoading||!authEmail.includes("@")} onClick={async()=>{
+                const sb=getSupabase();
+                if(!sb){setAuthMsg("Supabase non configuré — ajoutez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY dans Vercel.");return;}
+                setAuthLoading(true);setAuthMsg("");
+                const {error}=await sb.auth.signInWithOtp({email:authEmail,options:{emailRedirectTo:window.location.href}});
+                setAuthLoading(false);
+                setAuthMsg(error?`Erreur : ${error.message}`:"Lien de connexion envoyé — vérifiez votre email.");
+              }} style={{width:"100%",background:authLoading||!authEmail.includes("@")?C.border:C.accent,color:authLoading||!authEmail.includes("@")?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:600,cursor:authLoading||!authEmail.includes("@")?"default":"pointer",marginBottom:16}}>
+                {authLoading?"Envoi...":"Recevoir un lien magique"}
+              </button>
+              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Configuration requise dans Vercel :</div>
+                {[["NEXT_PUBLIC_SUPABASE_URL","URL de votre projet Supabase"],["NEXT_PUBLIC_SUPABASE_ANON_KEY","Clé anon publique Supabase"]].map(([k,v])=>(
+                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}>
+                    <code style={{fontSize:10,color:C.text,fontFamily:"monospace"}}>{k}</code>
+                    <span style={{fontSize:10,color:C.muted}}>{v}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
