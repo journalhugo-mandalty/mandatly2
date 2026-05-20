@@ -1,29 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Proxy ADEME DPE API — recent DPEs are strong selling signals
+// Dataset mis à jour juillet 2021 → ID correct
+const DATASET = "meg-83tjwtg8dyz4vv7h1dqe";
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const commune = searchParams.get("commune") || "";
+  const insee = searchParams.get("insee") || "";
   const lat = searchParams.get("lat");
   const lng = searchParams.get("lng");
 
-  if (!commune && (!lat || !lng)) {
-    return NextResponse.json({ error: "commune ou lat/lng requis" }, { status: 400 });
+  if (!commune && !insee) {
+    return NextResponse.json({ error: "commune ou insee requis" }, { status: 400 });
   }
 
   try {
-    // Query DPE by commune name — recent DPEs (< 12 months) = imminent sale signal
-    const qs = commune
-      ? `commune_(Brut):"${commune.toUpperCase()}"`
-      : "";
-    const geoFilter = lat && lng ? `&geo_distance_filter=${lat},${lng},3000` : "";
-    const qsParam = qs ? `&qs=${encodeURIComponent(qs)}` : "";
+    // Prefer INSEE code for exact match; fall back to commune name
+    const qParam = insee
+      ? `q_fields=code_insee_ban&q=${encodeURIComponent(insee)}`
+      : `q_fields=nom_commune_ban&q=${encodeURIComponent(commune.toUpperCase())}`;
 
-    const url = `https://data.ademe.fr/data-fair/api/v1/datasets/dpe-v2-logements-existants/lines?size=100${qsParam}${geoFilter}&select=N°DPE,adresse_ban,date_réception_DPE,etiquette_DPE,type_bâtiment,surface_habitable_logement,coordonnée_ban&sort=date_réception_DPE:-1`;
+    const url =
+      `https://data.ademe.fr/data-fair/api/v1/datasets/${DATASET}/lines` +
+      `?size=100&${qParam}` +
+      `&sort=date_reception_dpe:-1` +
+      `&select=adresse_ban,etiquette_dpe,date_reception_dpe,_geopoint,surface_habitable_logement,nom_commune_ban`;
 
     const res = await fetch(url, {
-      headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(8000),
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) {
@@ -35,21 +40,21 @@ export async function GET(req: NextRequest) {
 
     const now = new Date();
     const prospects = results
-      .filter((d: any) => d.coordonnée_ban && d.date_réception_DPE)
+      .filter((d: any) => d._geopoint && d.date_reception_dpe)
       .map((d: any) => {
-        const coords = String(d.coordonnée_ban).split(",");
-        const dpeLat = parseFloat(coords[0]);
-        const dpeLng = parseFloat(coords[1]);
-        if (!dpeLat || !dpeLng) return null;
+        const parts = String(d._geopoint).split(",");
+        const dpeLat = parseFloat(parts[0]);
+        const dpeLng = parseFloat(parts[1]);
+        if (isNaN(dpeLat) || isNaN(dpeLng)) return null;
 
-        const dateReception = new Date(d.date_réception_DPE);
+        const dateReception = new Date(d.date_reception_dpe);
         const ageJours = Math.floor((now.getTime() - dateReception.getTime()) / (1000 * 60 * 60 * 24));
+        const classe = d.etiquette_dpe || "D";
 
-        // DPE scoring: recent + bad class = strong sell signal
-        const classe = d.etiquette_DPE || "D";
-        const sClasse = ["F","G"].includes(classe) ? 35 : ["D","E"].includes(classe) ? 20 : 10;
+        // DPE F/G récent = signal de vente fort (contrainte loi Climat)
+        const sClasse = ["F", "G"].includes(classe) ? 40 : ["D", "E"].includes(classe) ? 20 : 10;
         const sRecence = ageJours < 60 ? 40 : ageJours < 180 ? 30 : ageJours < 365 ? 20 : 10;
-        const score = Math.min(100, sClasse + sRecence + 15);
+        const score = Math.min(100, sClasse + sRecence + 10);
 
         const adresse = d.adresse_ban || "Adresse inconnue";
         const rawId = adresse.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
@@ -57,20 +62,20 @@ export async function GET(req: NextRequest) {
         return {
           id: `dpe-${rawId}`,
           adresse,
-          ville: commune,
+          ville: d.nom_commune_ban || commune,
           score,
           source: "DPE",
           status: score >= 65 ? "À contacter" : "À surveiller",
-          notes: `DPE ${classe} · reçu le ${dateReception.toLocaleDateString("fr-FR")} · ${d.surface_habitable_logement || "?"}m²`,
+          notes: `DPE ${classe} · ${dateReception.toLocaleDateString("fr-FR")} · ${d.surface_habitable_logement || "?"}m²`,
           lat: dpeLat,
           lng: dpeLng,
           classe_dpe: classe,
-          date_dpe: d.date_réception_DPE,
+          date_dpe: d.date_reception_dpe,
         };
       })
       .filter(Boolean)
       .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 50);
+      .slice(0, 60);
 
     return NextResponse.json({ prospects, total: prospects.length });
   } catch (e: any) {

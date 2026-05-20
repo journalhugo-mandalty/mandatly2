@@ -4,146 +4,53 @@ import { getSupabase } from "../lib/supabase";
 
 const MapComponent = lazy(() => import("./map-component"));
 
-// ── Prospection DVF directement depuis le navigateur ──────────
+// ── Prospection DVF + DPE via routes serveur ──────────────────
 async function lancerDVF(ville: string) {
-  // Geocode via BAN (autorisé depuis le navigateur)
-  const banRes = await fetch(
-    `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(ville)}&type=municipality&limit=1`
-  );
-  const banData = await banRes.json();
-  if (!banData.features?.length) throw new Error("Ville introuvable");
-  
-  const [lng, lat] = banData.features[0].geometry.coordinates;
-  const nomVille = banData.features[0].properties.city || ville;
+  // Route serveur: CSV officiels files.data.gouv.fr (centaines de transactions/ville)
+  const dvfRes = await fetch(`/api/dvf?ville=${encodeURIComponent(ville)}`);
+  const dvfData = await dvfRes.json();
+  if (!dvfRes.ok) throw new Error(dvfData.error || "Erreur DVF");
 
-  // Fetch DVF via Etalab (autorisé depuis le navigateur)
-  let transactions: any[] = [];
-  try {
-    const dvfRes = await fetch(
-      `https://api-dvf.etalab.studio/api/geopoints?lat=${lat}&lon=${lng}&dist=3000&nombre_resultats=100`
-    );
-    if (dvfRes.ok) {
-      const d = await dvfRes.json();
-      transactions = d.results || d || [];
-    }
-  } catch {}
-
-  // Score les transactions
-  let prospects: any[] = [];
-  
-  if (transactions.length > 0) {
-    prospects = transactions
-      .filter((t: any) => 
-        (t.type_local === "Maison" || t.type_local === "Appartement") &&
-        t.valeur_fonciere > 0 && t.latitude && t.longitude
-      )
-      .map((t: any) => {
-        const annee = new Date(t.date_mutation).getFullYear();
-        const age = new Date().getFullYear() - annee;
-        const sAge = age>=10&&age<=15?40:age>=7&&age<10?35:age>=15&&age<=20?30:age>=5&&age<7?20:age>20?25:5;
-        const sPV = t.valeur_fonciere>300000?25:t.valeur_fonciere>150000?18:10;
-        const sType = t.type_local==="Maison"?15:12;
-        const score = Math.min(100, sAge+sPV+sType);
-        // HTML-safe stable ID: no spaces, deterministic
-        const rawId = `${t.adresse_numero||""}${t.adresse_nom_voie||""}${(t.date_mutation||"").slice(0,7)}`;
-        const stableId = "dvf-" + rawId.replace(/[^a-zA-Z0-9]/g,"").slice(0,24);
-        return {
-          id: stableId,
-          adresse: `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim()||"Adresse inconnue",
-          ville: t.nom_commune || nomVille,
-          score,
-          source: "DVF",
-          status: score>=65?"À contacter":"À surveiller",
-          notes: `Acheté en ${annee} · ${t.surface_reelle_bati||"?"}m² · ${Math.round(t.valeur_fonciere/1000)}k€`,
-          lat: t.latitude,
-          lng: t.longitude,
-          anciennete: age,
-          prix_achat: t.valeur_fonciere
-        };
-      });
-  }
-
-  // Fallback si DVF vide: géocoder de vraies adresses de la ville
-  if (!prospects.length) {
-    const rues = ["rue de la Paix","avenue de la Gare","rue du Commerce","boulevard de la République","rue Saint-Nicolas","rue des Vignes","chemin des Acacias","allée des Pins","rue du Moulin","rue Jean Jaurès","avenue Foch","rue Victor Hugo","rue de l'Église","rue des Écoles","impasse des Fleurs"];
-    const geocoded = await Promise.allSettled(
-      rues.slice(0,10).map(async (rue) => {
-        try {
-          const r = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(rue+" "+nomVille)}&limit=1`);
-          const d = await r.json();
-          if (!d.features?.length) return null;
-          const [lng2, lat2] = d.features[0].geometry.coordinates;
-          const rueHash = rue.split("").reduce((a:number,c:string)=>a+c.charCodeAt(0),0);
-          const annee = 2008 + (rueHash % 14);
-          const age = new Date().getFullYear() - annee;
-          const prix = 120000 + (rueHash % 380000);
-          const sAge = age>=10&&age<=15?40:age>=7&&age<10?35:age>=15&&age<=20?30:age>=5&&age<7?20:age>20?25:5;
-          const score = Math.min(100, sAge + (prix>300000?25:18) + 12);
-          const geoId = "geo-" + rue.replace(/[^a-zA-Z0-9]/g,"").slice(0,20);
-          return {
-            id: geoId,
-            adresse: d.features[0].properties.label,
-            ville: nomVille,
-            score,
-            source: "DVF",
-            status: score>=65?"À contacter":"À surveiller",
-            notes: `Acheté en ${annee} · ${60+(rueHash%120)}m² · ${Math.round(prix/1000)}k€`,
-            lat: lat2, lng: lng2, anciennete: age, prix_achat: prix
-          };
-        } catch { return null; }
-      })
-    );
-    prospects = geocoded
-      .filter((r): r is PromiseFulfilledResult<any> => r.status==="fulfilled" && r.value!==null)
-      .map(r => r.value);
-  }
-
-  // Fetch DPE signals in parallel (non-blocking)
+  // DPE en parallèle (signaux loi Climat — F/G = vente probable)
   let dpeProspects: any[] = [];
   try {
-    const dpeRes = await fetch(`/api/dpe?commune=${encodeURIComponent(nomVille)}&lat=${lat}&lng=${lng}`);
+    const insee = dvfData.insee || "";
+    const dpeRes = await fetch(
+      `/api/dpe?commune=${encodeURIComponent(dvfData.ville)}&lat=${dvfData.lat}&lng=${dvfData.lng}${insee ? `&insee=${insee}` : ""}`
+    );
     if (dpeRes.ok) {
       const dpeData = await dpeRes.json();
       dpeProspects = dpeData.prospects || [];
     }
   } catch {}
 
-  const allProspects = [...prospects, ...dpeProspects]
-    .sort((a,b) => b.score - a.score);
+  const allProspects = [...(dvfData.prospects || []), ...dpeProspects]
+    .sort((a: any, b: any) => b.score - a.score);
 
   return {
     prospects: allProspects,
-    lat: String(lat),
-    lng: String(lng),
-    ville: nomVille,
-    total: allProspects.length
+    lat: dvfData.lat,
+    lng: dvfData.lng,
+    ville: dvfData.ville,
+    total: allProspects.length,
+    dvfCount: dvfData.prospects?.length || 0,
+    dpeCount: dpeProspects.length,
   };
 }
 
 // ── Estimation & Avis de valeur via DVF ──────────────────────
 async function lancerEstimation(type: string, surface: number, ville: string, etat: string) {
-  const banRes = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(ville)}&type=municipality&limit=1`);
-  const banData = await banRes.json();
-  if (!banData.features?.length) throw new Error("Ville introuvable");
-  const [lng, lat] = banData.features[0].geometry.coordinates;
-  const nomVille = banData.features[0].properties.label;
-
-  const dvfRes = await fetch(`https://api-dvf.etalab.studio/api/geopoints?lat=${lat}&lon=${lng}&dist=5000&nombre_resultats=200`);
+  const dvfRes = await fetch(
+    `/api/dvf?ville=${encodeURIComponent(ville)}&mode=estimation&type=${encodeURIComponent(type)}&surface=${surface}`
+  );
   if (!dvfRes.ok) throw new Error("API DVF indisponible");
   const dvfData = await dvfRes.json();
-  const transactions: any[] = dvfData.results || dvfData || [];
-
-  const cutoff = new Date(Date.now() - 4 * 365 * 24 * 60 * 60 * 1000);
-  const comparables = transactions.filter(t =>
-    t.type_local === type && t.surface_reelle_bati > 0 && t.valeur_fonciere > 0 &&
-    t.surface_reelle_bati >= surface * 0.55 && t.surface_reelle_bati <= surface * 1.55 &&
-    new Date(t.date_mutation) >= cutoff
-  );
+  const comparables: any[] = dvfData.transactions || [];
 
   const prixM2s = comparables
-    .map(t => t.valeur_fonciere / t.surface_reelle_bati)
-    .filter(p => p > 500 && p < 25000)
-    .sort((a, b) => a - b);
+    .map((t: any) => t.valeur_fonciere / t.surface_reelle_bati)
+    .filter((p: number) => p > 500 && p < 25000)
+    .sort((a: number, b: number) => a - b);
 
   if (prixM2s.length < 3) throw new Error(`Seulement ${prixM2s.length} comparable(s) DVF — élargissez le rayon ou changez de ville`);
 
@@ -153,18 +60,18 @@ async function lancerEstimation(type: string, surface: number, ville: string, et
   const base = median * surface * facteur;
 
   return {
-    ville: nomVille, nb_comparables: comparables.length,
+    ville: dvfData.ville, nb_comparables: comparables.length,
     prix_m2_median: Math.round(median),
     prix_m2_min: Math.round(prixM2s[0]),
     prix_m2_max: Math.round(prixM2s[prixM2s.length-1]),
     estimation: Math.round(base),
     fourchette_bas: Math.round(base * 0.91),
     fourchette_haut: Math.round(base * 1.09),
-    comparables: comparables.slice(0,6).map(t => ({
+    comparables: comparables.slice(0, 6).map((t: any) => ({
       adresse: `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim() || "—",
       surface: t.surface_reelle_bati, prix: t.valeur_fonciere,
       prix_m2: Math.round(t.valeur_fonciere / t.surface_reelle_bati),
-      date: t.date_mutation?.slice(0,7)||"",
+      date: t.date_mutation?.slice(0, 7) || "",
     })),
   };
 }
@@ -258,6 +165,15 @@ export default function App() {
   // Propriétaire lookup
   const [propData, setPropData] = useState<Record<string,any>>({});
   const [propLoading, setPropLoading] = useState<string|null>(null);
+  // Street View modal
+  const [svModal, setSvModal] = useState<{lat:number;lng:number;adresse:string}|null>(null);
+  // Sélection prospects pour envoi batch
+  const [selProspects, setSelProspects] = useState<Set<any>>(new Set());
+  // Stats dernière prospection
+  const [dvfStats, setDvfStats] = useState<{dvf:number;dpe:number}|null>(null);
+  // Merci Facteur envoi en cours
+  const [mfSending, setMfSending] = useState(false);
+  const [mfResult, setMfResult] = useState<{ok:number;err:number}|null>(null);
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
@@ -671,141 +587,255 @@ export default function App() {
           </div>
         )}
 
+        {/* STREET VIEW MODAL */}
+        {svModal&&(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:2000,display:"flex",flexDirection:"column"}} onClick={()=>setSvModal(null)}>
+            <div style={{padding:"10px 16px",background:"#000",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}} onClick={e=>e.stopPropagation()}>
+              <span style={{color:"#fff",fontSize:12,fontFamily:BODY}}>{svModal.adresse}</span>
+              <button onClick={()=>setSvModal(null)} style={{background:"transparent",border:"none",color:"#888",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+            </div>
+            <iframe
+              src={`https://maps.google.com/maps?q=&layer=c&cbll=${svModal.lat},${svModal.lng}&output=embed`}
+              style={{flex:1,border:"none"}}
+              loading="lazy"
+            />
+            <div style={{background:"#000",padding:"8px 16px",display:"flex",gap:12,alignItems:"center"}}>
+              <a href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${svModal.lat},${svModal.lng}`} target="_blank" rel="noopener" style={{fontSize:11,color:"#aaa",textDecoration:"none"}}>Ouvrir dans Google Maps →</a>
+            </div>
+          </div>
+        )}
+
         {/* PROSPECTION */}
         {nav==="prospects"&&(
-          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+          <div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
             {/* LEFT PANEL */}
-            <div style={{width:320,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",background:C.surface,flexShrink:0}}>
-              <div style={{padding:"20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
-                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:4}}>Prospection</div>
-                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Identifiez les propriétaires prêts à vendre</div>
-                {/* Search */}
-                <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <div style={{width:340,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",background:C.surface,flexShrink:0}}>
+              {/* Search header */}
+              <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontFamily:DISPLAY,fontSize:17,fontWeight:500,color:C.text,marginBottom:12}}>Prospecter une ville</div>
+                <div style={{display:"flex",gap:8,marginBottom:8}}>
                   <input value={prospSecteur} onChange={e=>setProspSecteur(e.target.value)} onKeyDown={async e=>{
-                    if(e.key!=="Enter"||!prospSecteur.trim()) return;
-                    setDvfLoading(true); setDvfError(""); setSelProspect(null); setProspects([]);
+                    if(e.key!=="Enter"||!prospSecteur.trim()||dvfLoading) return;
+                    setDvfLoading(true); setDvfError(""); setSelProspect(null); setProspects([]); setSelProspects(new Set()); setDvfStats(null);
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
                       const ps = data.prospects || [];
                       setProspects(ps);
+                      setDvfStats({dvf: data.dvfCount||0, dpe: data.dpeCount||0});
                       setDvfLoading(false);
                       enrichirProspects(ps);
-                      return;
-                    } catch(err:any){setDvfError(err.message||"Erreur API");}
-                    setDvfLoading(false);
-                  }} placeholder="Code postal ou commune..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    } catch(err:any){setDvfError(err.message||"Erreur API"); setDvfLoading(false);}
+                  }} placeholder="Ex : 33000 ou Bordeaux..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13,fontFamily:BODY}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
                   <button disabled={dvfLoading||!prospSecteur} onClick={async()=>{
-                    if(!prospSecteur.trim()) return;
-                    setDvfLoading(true); setDvfError(""); setSelProspect(null); setProspects([]);
+                    if(!prospSecteur.trim()||dvfLoading) return;
+                    setDvfLoading(true); setDvfError(""); setSelProspect(null); setProspects([]); setSelProspects(new Set()); setDvfStats(null);
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
                       const ps = data.prospects || [];
                       setProspects(ps);
+                      setDvfStats({dvf: data.dvfCount||0, dpe: data.dpeCount||0});
                       setDvfLoading(false);
                       enrichirProspects(ps);
-                      return;
-                    } catch(err:any){setDvfError(err.message||"Erreur API");}
-                    setDvfLoading(false);
-                  }} style={{background:dvfLoading?C.border:C.accent,color:dvfLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:500,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0}}>
-                    {dvfLoading?"...":"→"}
+                    } catch(err:any){setDvfError(err.message||"Erreur API"); setDvfLoading(false);}
+                  }} style={{background:dvfLoading?C.border:C.accent,color:dvfLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontWeight:600,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0,transition:"all 0.15s"}}>
+                    {dvfLoading?"...":"Analyser"}
                   </button>
                 </div>
-                {dvfError&&<div style={{fontSize:12,color:C.red,marginBottom:8}}>{dvfError}</div>}
-                {/* Method filters */}
-                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                  {[{id:"",l:"Tous"},{id:"DVF",l:"DVF"},{id:"DPE",l:"DPE"},{id:"StreetView",l:"Vision IA"}].map(f=>(
-                    <button key={f.id} onClick={()=>setProspMethod(f.id)} style={{padding:"4px 10px",background:prospMethod===f.id?C.accent:C.card,color:prospMethod===f.id?(dark?"#080808":"#FAFAFA"):C.muted,border:`1px solid ${prospMethod===f.id?C.accent:C.border}`,borderRadius:20,fontSize:11,fontWeight:prospMethod===f.id?600:400,cursor:"pointer",transition:"all 0.15s"}}>{f.l}</button>
+                {dvfError&&<div style={{fontSize:12,color:C.red,marginBottom:6}}>{dvfError}</div>}
+                {/* Stats bar */}
+                {dvfStats&&(
+                  <div style={{display:"flex",gap:10,marginBottom:8}}>
+                    <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px"}}>
+                      <span style={{fontWeight:600,color:C.text}}>{dvfStats.dvf}</span> DVF
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px"}}>
+                      <span style={{fontWeight:600,color:C.text}}>{dvfStats.dpe}</span> DPE
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px"}}>
+                      <span style={{fontWeight:600,color:C.text}}>{prospects.length}</span> prospects
+                    </div>
+                  </div>
+                )}
+                {/* Filters */}
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  {[{id:"",l:"Tous"},{id:"DVF",l:"DVF"},{id:"DPE",l:"DPE F/G"}].map(f=>(
+                    <button key={f.id} onClick={()=>setProspMethod(f.id)} style={{padding:"3px 9px",background:prospMethod===f.id?C.accent:C.card,color:prospMethod===f.id?(dark?"#080808":"#FAFAFA"):C.muted,border:`1px solid ${prospMethod===f.id?C.accent:C.border}`,borderRadius:20,fontSize:11,fontWeight:prospMethod===f.id?600:400,cursor:"pointer"}}>{f.l}</button>
                   ))}
                 </div>
               </div>
+
+              {/* Batch action bar */}
+              {selProspects.size>0&&(
+                <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+                  <span style={{fontSize:12,color:C.text,fontWeight:500}}>{selProspects.size} sélectionné{selProspects.size>1?"s":""}</span>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>{
+                      const ps = prospects.filter(p=>selProspects.has(p.id));
+                      if(ps.length>0){setCourrier({prospect:ps[0],template:"prospection",content:"",loading:false});setNav("courriers");}
+                    }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Courrier digital</button>
+                    <button disabled={mfSending} onClick={async()=>{
+                      if(mfSending) return;
+                      const ps = prospects.filter(p=>selProspects.has(p.id) && p.adresse && p.ville);
+                      if(!ps.length) return;
+                      setMfSending(true); setMfResult(null);
+                      let ok=0, err=0;
+                      for(const p of ps){
+                        const adresseParts = p.adresse.match(/^(.*?)\s+(\d{5})\s+(.*)$/)||[];
+                        const cp = p.ville?.match(/\d{5}/)?.[0] || adresseParts[2] || "";
+                        const ville = p.ville?.replace(/\d{5}\s*/,"").trim() || adresseParts[3] || p.ville;
+                        const content = `Madame, Monsieur,\n\nNous représentons ${agent.agence} et sommes spécialisés dans les transactions immobilières de votre secteur.\n\nVotre bien situé au ${p.adresse}, ${p.ville} nous intéresse particulièrement. Nous disposons actuellement d'acheteurs qualifiés à la recherche d'un bien correspondant à votre propriété.\n\nNous serions heureux de vous proposer une estimation gratuite et sans engagement.\n\nCordialement,\n${agent.prenom} ${agent.nom}\n${agent.agence}`;
+                        const r = await fetch("/api/merci-facteur",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+                          dest_nom: p.proprietaire_nom || "Madame, Monsieur",
+                          dest_adresse: p.adresse,
+                          dest_cp: cp || "33000",
+                          dest_ville: ville,
+                          exp_nom: `${agent.prenom} ${agent.nom}`,
+                          exp_adresse: agent.email,
+                          content,
+                        })});
+                        (await r.json()).ok ? ok++ : err++;
+                      }
+                      setMfSending(false);
+                      setMfResult({ok,err});
+                      if(ok>0){
+                        const now = new Date().toISOString().slice(0,10);
+                        const newHisto = prospects.filter(p=>selProspects.has(p.id)).map(p=>({
+                          id:Date.now()+Math.random(), prospect_id:p.id,
+                          prospect_adresse:p.adresse, prospect_ville:p.ville,
+                          date:now, template:"prospection", statut:"envoye" as const,
+                          content:"Courrier papier via Merci Facteur",
+                        }));
+                        setCourrierHisto(h=>[...newHisto,...h]);
+                        setSelProspects(new Set());
+                      }
+                    }} style={{background:C.gold,color:"#000",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:mfSending?"not-allowed":"pointer"}}>
+                      {mfSending?"Envoi...":"Merci Facteur →"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {mfResult&&(
+                <div style={{padding:"8px 16px",background:mfResult.err>0?C.red+"15":C.green+"15",borderBottom:`1px solid ${C.border}`,fontSize:11,color:mfResult.err>0?C.red:C.green,flexShrink:0}}>
+                  {mfResult.ok>0&&`${mfResult.ok} courrier(s) envoyé(s). `}
+                  {mfResult.err>0&&`${mfResult.err} erreur(s) — configurez MERCI_FACTEUR_TOKEN dans Vercel.`}
+                </div>
+              )}
+
               {/* Prospects list */}
               <div style={{flex:1,overflowY:"auto"}}>
                 {prospects.filter(p=>!prospMethod||p.source===prospMethod).length===0?(
-                  <div style={{padding:20,textAlign:"center",color:C.muted}}>
-                    <div style={{fontSize:13,marginBottom:4}}>Aucun prospect</div>
-                    <div style={{fontSize:12}}>Tapez un code postal et appuyez sur Entrée</div>
+                  <div style={{padding:24,textAlign:"center",color:C.muted}}>
+                    <div style={{fontFamily:DISPLAY,fontSize:20,fontWeight:400,fontStyle:"italic",marginBottom:8,color:C.text}}>Aucun prospect</div>
+                    <div style={{fontSize:12}}>Entrez un code postal ou une commune et cliquez Analyser</div>
+                    <div style={{fontSize:11,marginTop:8,color:C.muted}}>Sources : DVF Etalab (transactions) + DPE ADEME (diagnostics F/G)</div>
                   </div>
                 ):(
                   prospects.filter(p=>!prospMethod||p.source===prospMethod).map(p=>{
                     const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
+                    const isSel = selProspects.has(p.id);
                     return(
-                      <div key={p.id} id={"prospect-"+p.id} onClick={()=>setSelProspect(selProspect?.id===p.id?null:p)} style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:selProspect?.id===p.id?C.accentBg:"transparent",transition:"background 0.15s"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-                          <div style={{width:28,height:28,borderRadius:6,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                      <div key={p.id} id={"prospect-"+p.id} onClick={()=>setSelProspect(selProspect?.id===p.id?null:p)} style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:selProspect?.id===p.id?C.accentBg:isSel?C.accentBg+"80":"transparent",transition:"background 0.15s"}}>
+                        <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:3}}>
+                          {/* Checkbox */}
+                          <div onClick={e=>{e.stopPropagation();setSelProspects(s=>{const n=new Set(s);isSel?n.delete(p.id):n.add(p.id);return n;})}} style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${isSel?C.gold:C.border}`,background:isSel?C.gold:"transparent",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all 0.15s"}}>
+                            {isSel&&<div style={{width:8,height:8,borderRadius:2,background:"#fff"}}/>}
+                          </div>
+                          {/* Score badge */}
+                          <div style={{width:30,height:30,borderRadius:6,background:col+"18",border:`1px solid ${col}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
-                            <div style={{fontSize:11,color:C.muted}}>{p.ville}</div>
+                            <div style={{display:"flex",alignItems:"center",gap:5,marginTop:2}}>
+                              <span style={{fontSize:10,color:C.muted}}>{p.ville}</span>
+                              <span style={{fontSize:10,background:p.source==="DPE"?C.amber+"20":C.blue+"15",color:p.source==="DPE"?C.amber:C.blue,border:`1px solid ${p.source==="DPE"?C.amber+"40":C.blue+"30"}`,borderRadius:4,padding:"0px 5px",fontWeight:600}}>{p.source}{(p as any).classe_dpe?" "+((p as any).classe_dpe):""}</span>
+                            </div>
                           </div>
                         </div>
-                        <div style={{fontSize:11,color:C.muted,marginLeft:38,marginBottom:4}}>{p.notes}</div>
-                        {/* Proprietaire enrichment display */}
-                        <div style={{marginLeft:38,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        <div style={{fontSize:11,color:C.muted,marginLeft:54,marginBottom:4}}>{p.notes}</div>
+                        {/* Score bar */}
+                        <div style={{marginLeft:54,height:3,background:C.border,borderRadius:2,marginBottom:4}}>
+                          <div style={{width:`${p.score}%`,height:"100%",background:col,borderRadius:2,transition:"width 0.5s"}}/>
+                        </div>
+                        {/* Proprietaire */}
+                        <div style={{marginLeft:54,display:"flex",alignItems:"center",gap:6}}>
                           {p.proprietaire_chargement?(
-                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Identification...</span>
+                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Identification propriétaire...</span>
                           ):p.proprietaire_nom?(
                             <>
-                              <span style={{fontSize:11,fontWeight:500,color:C.text}}>{p.proprietaire_nom}</span>
-                              <span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>
-                                {p.proprietaire_source==="sci+dirigeant"?"SCI · dirigeant":p.proprietaire_source==="sirene+dirigeant"?"Sirene · dirigeant":p.proprietaire_source==="sci"?"SCI":p.proprietaire_source==="sirene"?"Sirene":p.proprietaire_source==="cadastre"?"Cadastre":"Inconnu"}
+                              <span style={{fontSize:11,fontWeight:600,color:C.text}}>{p.proprietaire_nom}</span>
+                              <span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"0px 5px"}}>
+                                {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="sirene+dirigeant"?"Sirene":p.proprietaire_source==="cadastre"?"Cadastre":"Source"}
                               </span>
                             </>
                           ):p.proprietaire_source&&p.proprietaire_source!=="inconnu"?(
-                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Particulier · contact inconnu</span>
-                          ):p.proprietaire_source==="inconnu"?(
-                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Inconnu</span>
+                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Particulier</span>
                           ):null}
                         </div>
-                        {selProspect?.id===p.id&&propData[String(p.id)]&&(
-                          <div style={{marginTop:10,marginLeft:38,padding:"10px 12px",background:C.card,borderRadius:8,border:`1px solid ${C.border}`}}>
-                            {propData[String(p.id)].parcelles?.length>0&&(
-                              <div style={{marginBottom:6}}>
-                                <span style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.05em"}}>Cadastre — </span>
-                                <span style={{fontSize:12,color:C.text}}>Section {propData[String(p.id)].parcelles[0].section} n°{propData[String(p.id)].parcelles[0].numero} · {propData[String(p.id)].parcelles[0].contenance}m²</span>
-                                {propData[String(p.id)].deepLink&&<a href={propData[String(p.id)].deepLink} target="_blank" rel="noopener" style={{fontSize:11,color:C.blue,marginLeft:8,textDecoration:"none"}}>Voir carte →</a>}
-                              </div>
-                            )}
-                            {propData[String(p.id)].entreprises?.length>0&&(
-                              <div>
-                                <span style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.05em"}}>Sirene — </span>
-                                <span style={{fontSize:12,color:C.text}}>{propData[String(p.id)].entreprises[0].nom}</span>
-                                <span style={{fontSize:11,color:C.muted,marginLeft:6}}>{propData[String(p.id)].entreprises[0].activite}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
+                        {/* Expanded actions */}
                         {selProspect?.id===p.id&&(
-                          <div style={{marginTop:10,marginLeft:38,display:"flex",gap:6}}>
-                            <button onClick={e=>{e.stopPropagation();setCourrier({prospect:p,template:"prospection",content:"",loading:false});setNav("courriers");}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Courrier</button>
-                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse complète du prospect au ${p.adresse} : score ${p.score}/100, ${p.notes}. Quelle stratégie de contact recommandes-tu ?`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Analyser</button>
-                            {(p as any).lat&&(p as any).lng&&(
-                              <button onClick={e=>{e.stopPropagation();window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${(p as any).lat},${(p as any).lng}`,"_blank");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Street View</button>
+                          <>
+                            {propData[String(p.id)]&&(
+                              <div style={{marginTop:8,marginLeft:54,padding:"8px 10px",background:C.card,borderRadius:7,border:`1px solid ${C.border}`}}>
+                                {propData[String(p.id)].parcelles?.length>0&&(
+                                  <div style={{marginBottom:4}}>
+                                    <span style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Cadastre — </span>
+                                    <span style={{fontSize:11,color:C.text}}>Section {propData[String(p.id)].parcelles[0].section} n°{propData[String(p.id)].parcelles[0].numero} · {propData[String(p.id)].parcelles[0].contenance}m²</span>
+                                    {propData[String(p.id)].deepLink&&<a href={propData[String(p.id)].deepLink} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,marginLeft:6}}>carte →</a>}
+                                  </div>
+                                )}
+                                {propData[String(p.id)].entreprises?.length>0&&(
+                                  <div>
+                                    <span style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Sirene — </span>
+                                    <span style={{fontSize:11,color:C.text}}>{propData[String(p.id)].entreprises[0].nom}</span>
+                                  </div>
+                                )}
+                              </div>
                             )}
-                            {(p as any).lat&&(p as any).lng&&(
-                              <button onClick={async e=>{
-                                e.stopPropagation();
-                                const key=String(p.id);
-                                if(propData[key]) return;
-                                setPropLoading(key);
-                                try{
-                                  const r=await fetch(`/api/proprietaire?lat=${(p as any).lat}&lng=${(p as any).lng}&adresse=${encodeURIComponent(p.adresse+" "+p.ville)}`);
-                                  const d=await r.json();
-                                  setPropData(x=>({...x,[key]:d}));
-                                }catch{}
-                                setPropLoading(null);
-                              }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>
-                                {propLoading===String(p.id)?"...":"Cadastre"}
-                              </button>
-                            )}
-                          </div>
+                            <div style={{marginTop:8,marginLeft:54,display:"flex",gap:5,flexWrap:"wrap"}}>
+                              <button onClick={e=>{e.stopPropagation();setCourrier({prospect:p,template:"prospection",content:"",loading:false});setNav("courriers");}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>Courrier</button>
+                              <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse le prospect au ${p.adresse} (score ${p.score}/100, ${p.notes}). Recommande une stratégie.`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>Lucas</button>
+                              {(p as any).lat&&(p as any).lng&&(
+                                <button onClick={e=>{e.stopPropagation();setSvModal({lat:(p as any).lat,lng:(p as any).lng,adresse:p.adresse});}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>Street View</button>
+                              )}
+                              {(p as any).lat&&(p as any).lng&&!propData[String(p.id)]&&(
+                                <button onClick={async e=>{
+                                  e.stopPropagation();
+                                  const key=String(p.id); setPropLoading(key);
+                                  try{
+                                    const r=await fetch(`/api/proprietaire?lat=${(p as any).lat}&lng=${(p as any).lng}&adresse=${encodeURIComponent(p.adresse+" "+p.ville)}`);
+                                    const d=await r.json();
+                                    setPropData(x=>({...x,[key]:d}));
+                                  }catch{}
+                                  setPropLoading(null);
+                                }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>
+                                  {propLoading===String(p.id)?"...":"Cadastre"}
+                                </button>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
                     );
                   })
                 )}
               </div>
+
+              {/* Select all bar */}
+              {prospects.length>0&&(
+                <div style={{padding:"10px 16px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:C.card}}>
+                  <button onClick={()=>{
+                    const filtered = prospects.filter(p=>!prospMethod||p.source===prospMethod);
+                    if(selProspects.size===filtered.length) setSelProspects(new Set());
+                    else setSelProspects(new Set(filtered.map(p=>p.id)));
+                  }} style={{fontSize:11,color:C.muted,background:"transparent",border:"none",cursor:"pointer",padding:0}}>
+                    {selProspects.size>0?"Tout désélectionner":"Tout sélectionner"}
+                  </button>
+                  <span style={{fontSize:11,color:C.muted}}>{selProspects.size}/{prospects.filter(p=>!prospMethod||p.source===prospMethod).length}</span>
+                </div>
+              )}
             </div>
+
             {/* MAP */}
             <div style={{flex:1,position:"relative"}}>
               <Suspense fallback={<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:13}}>Chargement de la carte...</div>}>
@@ -820,15 +850,29 @@ export default function App() {
                   dark={dark}
                 />
               </Suspense>
-              {/* Map overlay stats */}
-              <div style={{position:"absolute",top:12,left:12,background:dark?"rgba(8,8,8,0.9)":"rgba(255,255,255,0.9)",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",backdropFilter:"blur(8px)",zIndex:10}}>
-                <div style={{fontSize:11,color:C.muted,marginBottom:2}}>Prospects identifiés</div>
-                <div style={{fontSize:20,fontWeight:700,color:C.text}}>{prospects.length}</div>
+              {/* Stats overlay */}
+              <div style={{position:"absolute",top:12,left:12,background:dark?"rgba(8,8,8,0.92)":"rgba(255,255,255,0.94)",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",backdropFilter:"blur(10px)",zIndex:10}}>
+                {dvfStats?(
+                  <>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Analyse terminée</div>
+                    <div style={{display:"flex",gap:12}}>
+                      <div><span style={{fontSize:18,fontFamily:DISPLAY,fontWeight:600,color:C.text}}>{dvfStats.dvf}</span><div style={{fontSize:10,color:C.muted}}>DVF</div></div>
+                      <div><span style={{fontSize:18,fontFamily:DISPLAY,fontWeight:600,color:C.amber}}>{dvfStats.dpe}</span><div style={{fontSize:10,color:C.muted}}>DPE</div></div>
+                      <div><span style={{fontSize:18,fontFamily:DISPLAY,fontWeight:600,color:C.green}}>{prospects.filter(p=>p.score>=75).length}</span><div style={{fontSize:10,color:C.muted}}>Prioritaires</div></div>
+                    </div>
+                  </>
+                ):(
+                  <>
+                    <div style={{fontSize:11,color:C.muted,marginBottom:2}}>Prospects</div>
+                    <div style={{fontSize:20,fontFamily:DISPLAY,fontWeight:600,color:C.text}}>{prospects.length}</div>
+                  </>
+                )}
               </div>
               {dvfLoading&&(
-                <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:dark?"rgba(8,8,8,0.9)":"rgba(255,255,255,0.9)",border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 24px",backdropFilter:"blur(8px)",zIndex:20,textAlign:"center"}}>
-                  <div style={{fontSize:13,color:C.text,marginBottom:4}}>Analyse DVF en cours...</div>
-                  <div style={{fontSize:12,color:C.muted}}>Interrogation des données officielles</div>
+                <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:dark?"rgba(8,8,8,0.92)":"rgba(255,255,255,0.94)",border:`1px solid ${C.border}`,borderRadius:12,padding:"20px 28px",backdropFilter:"blur(10px)",zIndex:20,textAlign:"center"}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:20,fontWeight:400,fontStyle:"italic",color:C.text,marginBottom:6}}>Analyse en cours...</div>
+                  <div style={{fontSize:12,color:C.muted}}>Téléchargement des fichiers DVF officiels</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:4}}>+ DPE ADEME F/G (signaux vente)</div>
                 </div>
               )}
             </div>
