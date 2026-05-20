@@ -203,7 +203,7 @@ const PIPELINE_COLS = [{id:"prospect",label:"Prospect",color:"#94A3B8"},{id:"est
 const fmt = (n:number) => n?.toLocaleString("fr-FR") || "0";
 
 export default function App() {
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] = useState(false);
   const [nav, setNav] = useState("dashboard");
   const [mandats, setMandats] = useState<Mandat[]>(()=>{
     if(typeof window==="undefined") return MANDATS;
@@ -329,20 +329,33 @@ export default function App() {
   },[mandats, acheteurs, rdvs, transacs, courrierHisto, agent]);
 
   const C = dark ? {
-    bg:"#080808",surface:"#0F0F0F",card:"#141414",border:"#1C1C1C",border2:"#242424",
-    text:"#FAFAFA",muted:"#525252",soft:"#737373",
-    accent:"#FAFAFA",accentBg:"rgba(250,250,250,0.06)",
-    green:"#10B981",red:"#EF4444",amber:"#F59E0B",blue:"#3B82F6",purple:"#8B5CF6",
-    shadow:"rgba(0,0,0,0.6)"
+    // Marine élégant — nuit
+    bg:"#07111F",surface:"#0C1929",card:"#111E2E",border:"#1C2F45",border2:"#243A54",
+    text:"#EDE8DC",muted:"#566480",soft:"#7289A6",
+    accent:"#C4A35A",accentBg:"rgba(196,163,90,0.08)",
+    green:"#3DAB74",red:"#C05040",amber:"#C4873A",blue:"#5B8CCC",purple:"#8B6FC0",
+    gold:"#C4A35A",navy:"#5B8CCC",
+    shadow:"rgba(0,0,0,0.7)"
   }:{
-    bg:"#FFFFFF",surface:"#FAFAFA",card:"#FFFFFF",border:"#F0F0F0",border2:"#E5E5E5",
-    text:"#0A0A0A",muted:"#A3A3A3",soft:"#737373",
-    accent:"#0A0A0A",accentBg:"rgba(10,10,10,0.04)",
-    green:"#059669",red:"#DC2626",amber:"#D97706",blue:"#2563EB",purple:"#7C3AED",
-    shadow:"rgba(0,0,0,0.06)"
+    // Blanc ivoire — prestige
+    bg:"#FFFFFF",surface:"#F8F6F1",card:"#FFFFFF",border:"#EAE5D8",border2:"#D6CFBF",
+    text:"#14213D",muted:"#8A8372",soft:"#5C5747",
+    accent:"#14213D",accentBg:"rgba(20,33,61,0.05)",
+    green:"#2A6647",red:"#A83228",amber:"#B5762A",blue:"#14213D",purple:"#4A3564",
+    gold:"#C4A35A",navy:"#14213D",
+    shadow:"rgba(20,33,61,0.10)"
   };
 
-  const card = (p:any={}) => ({background:C.card,border:`1px solid ${C.border}`,borderRadius:12,...p});
+  const DISPLAY = "var(--font-display), 'Cormorant Garamond', Georgia, serif";
+  const BODY = "var(--font-body), 'DM Sans', -apple-system, sans-serif";
+
+  const card = (p:any={}) => ({
+    background:C.card,
+    border:`1px solid ${C.border}`,
+    borderRadius:10,
+    boxShadow:`0 1px 3px ${C.shadow}, 0 4px 16px rgba(20,33,61,0.04)`,
+    ...p
+  });
 
   // Progressive background enrichment: resolve proprietaire for each prospect (batches of 3)
   const enrichirProspects = useCallback(async (list: Prospect[]) => {
@@ -395,62 +408,71 @@ export default function App() {
 
   // ONBOARDING
   if(onboarding) return (
-    <div style={{minHeight:"100vh",background:"#080808",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif"}}>
+    <div style={{minHeight:"100vh",background:"#FFFFFF",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"var(--font-body),'DM Sans',-apple-system,sans-serif"}}>
       <style>{`*{box-sizing:border-box;margin:0;padding:0;}@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div style={{width:"100%",maxWidth:440,animation:"fadeUp 0.5s ease"}}>
-        <div style={{display:"flex",gap:4,marginBottom:40,justifyContent:"center"}}>
-          {["Bienvenue","Agent IA","Profil"].map((s,i)=>(
-            <div key={s} style={{display:"flex",alignItems:"center",gap:4}}>
-              <div style={{width:i<obStep?20:i===obStep?20:20,height:4,borderRadius:2,background:i<=obStep?"#FAFAFA":"#1C1C1C",transition:"all 0.3s"}}/>
-            </div>
+        {/* Logo */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:52,justifyContent:"center"}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:"#C4A35A"}}/>
+          <span style={{fontFamily:"var(--font-display),'Cormorant Garamond',Georgia,serif",fontSize:20,fontWeight:600,color:"#14213D",letterSpacing:"0.15em",textTransform:"uppercase"}}>Mandatly</span>
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:40,justifyContent:"center"}}>
+          {["Bienvenue","Personnaliser","Profil"].map((s,i)=>(
+            <div key={s} style={{width:i<=obStep?28:20,height:3,borderRadius:2,background:i<=obStep?"#14213D":"#EAE5D8",transition:"all 0.4s"}}/>
           ))}
         </div>
 
         {obStep===0&&(
           <div style={{animation:"fadeUp 0.4s ease"}}>
-            <h1 style={{fontSize:36,fontWeight:700,color:"#FAFAFA",marginBottom:12,letterSpacing:"-0.03em",lineHeight:1.15}}>Le CRM qui prospecte pour vous.</h1>
-            <p style={{fontSize:15,color:"#737373",lineHeight:1.7,marginBottom:32}}>Mandatly est le premier CRM immobilier avec un agent IA intégré. Il prospecte, rédige vos courriers et gère votre agenda — pendant que vous faites des visites.</p>
-            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:32}}>
+            <div style={{fontSize:11,color:"#C4A35A",fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:14}}>Bienvenue</div>
+            <h1 style={{fontFamily:"var(--font-display),'Cormorant Garamond',Georgia,serif",fontSize:42,fontWeight:400,color:"#14213D",marginBottom:14,letterSpacing:"-0.01em",lineHeight:1.1,fontStyle:"italic"}}>Le CRM qui prospecte pour vous.</h1>
+            <p style={{fontSize:14,color:"#8A8372",lineHeight:1.75,marginBottom:32}}>Mandatly est le premier CRM immobilier avec un agent IA intégré. Il prospecte, rédige vos courriers et gère votre agenda — pendant que vous faites des visites.</p>
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:32}}>
               {[["Prospection DVF & DPE automatique","Identifiez les propriétaires prêts à vendre"],["Courriers personnalisés en 1 clic","Lucas rédige, vous validez, Merci Facteur envoie"],["Agent IA disponible 24h/24","Posez n'importe quelle question sur vos dossiers"]].map(([t,d])=>(
-                <div key={t} style={{padding:"14px 16px",background:"#0F0F0F",border:"1px solid #1C1C1C",borderRadius:10}}>
-                  <div style={{fontSize:13,fontWeight:600,color:"#FAFAFA",marginBottom:2}}>{t}</div>
-                  <div style={{fontSize:12,color:"#525252"}}>{d}</div>
+                <div key={t} style={{padding:"14px 18px",background:"#F8F6F1",border:"1px solid #EAE5D8",borderRadius:8,display:"flex",alignItems:"flex-start",gap:12}}>
+                  <div style={{width:4,height:4,borderRadius:"50%",background:"#C4A35A",flexShrink:0,marginTop:5}}/>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500,color:"#14213D",marginBottom:1}}>{t}</div>
+                    <div style={{fontSize:12,color:"#8A8372"}}>{d}</div>
+                  </div>
                 </div>
               ))}
             </div>
-            <button onClick={()=>setObStep(1)} style={{width:"100%",background:"#FAFAFA",color:"#080808",border:"none",borderRadius:10,padding:"14px",fontSize:15,fontWeight:600,cursor:"pointer",transition:"opacity 0.2s"}} onMouseOver={e=>(e.currentTarget.style.opacity="0.9")} onMouseOut={e=>(e.currentTarget.style.opacity="1")}>Commencer</button>
+            <button onClick={()=>setObStep(1)} style={{width:"100%",background:"#14213D",color:"#FFFFFF",border:"none",borderRadius:8,padding:"14px",fontSize:13,fontWeight:500,cursor:"pointer",letterSpacing:"0.06em",transition:"opacity 0.2s"}} onMouseOver={e=>(e.currentTarget.style.opacity="0.85")} onMouseOut={e=>(e.currentTarget.style.opacity="1")}>Commencer →</button>
           </div>
         )}
 
         {obStep===1&&(
           <div style={{animation:"fadeUp 0.4s ease"}}>
-            <h2 style={{fontSize:28,fontWeight:700,color:"#FAFAFA",marginBottom:8,letterSpacing:"-0.02em"}}>Votre agent IA</h2>
-            <p style={{fontSize:14,color:"#737373",marginBottom:28}}>Choisissez le profil de votre secrétaire IA et personnalisez son prénom.</p>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:20}}>
+            <div style={{fontSize:11,color:"#C4A35A",fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:12}}>Votre agent IA</div>
+            <h2 style={{fontFamily:"var(--font-display),'Cormorant Garamond',Georgia,serif",fontSize:34,fontWeight:400,color:"#14213D",marginBottom:8,fontStyle:"italic"}}>Choisissez votre assistant</h2>
+            <p style={{fontSize:13,color:"#8A8372",marginBottom:24}}>Personnalisez le prénom de votre secrétaire IA.</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
               {[{id:"lucas",name:"Lucas",role:"Professionnel"},{id:"sophie",name:"Sophie",role:"Élégante"},{id:"alex",name:"Alex",role:"Dynamique"},{id:"marie",name:"Marie",role:"Experte"}].map(a=>(
-                <div key={a.id} onClick={()=>setObData(d=>({...d,agentId:a.id,prenom:d.prenom||a.name} as any))} style={{padding:"16px",background:(obData as any).agentId===a.id?"rgba(250,250,250,0.06)":"#0F0F0F",border:`1px solid ${(obData as any).agentId===a.id?"#FAFAFA":"#1C1C1C"}`,borderRadius:10,cursor:"pointer",transition:"all 0.2s"}}>
-                  <div style={{width:32,height:32,borderRadius:"50%",background:"#1C1C1C",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    <div style={{width:14,height:14,borderRadius:"50%",background:(obData as any).agentId===a.id?"#FAFAFA":"#525252"}}/>
+                <div key={a.id} onClick={()=>setObData(d=>({...d,agentId:a.id,prenom:d.prenom||a.name} as any))} style={{padding:"14px 16px",background:(obData as any).agentId===a.id?"#EAE5D8":"#F8F6F1",border:`1px solid ${(obData as any).agentId===a.id?"#14213D":"#EAE5D8"}`,borderRadius:8,cursor:"pointer",transition:"all 0.2s"}}>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:(obData as any).agentId===a.id?"#14213D":"#EAE5D8",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <div style={{width:10,height:10,borderRadius:"50%",background:(obData as any).agentId===a.id?"#C4A35A":"#8A8372"}}/>
                   </div>
-                  <div style={{fontSize:13,fontWeight:600,color:"#FAFAFA"}}>{a.name}</div>
-                  <div style={{fontSize:11,color:"#525252"}}>{a.role}</div>
+                  <div style={{fontSize:13,fontWeight:500,color:"#14213D"}}>{a.name}</div>
+                  <div style={{fontSize:11,color:"#8A8372"}}>{a.role}</div>
                 </div>
               ))}
             </div>
-            <input value={obData.prenom} onChange={e=>setObData(d=>({...d,prenom:e.target.value}))} placeholder="Prénom de votre agent" style={{width:"100%",background:"#0F0F0F",border:"1px solid #1C1C1C",borderRadius:10,color:"#FAFAFA",padding:"12px 14px",fontSize:14,marginBottom:16}} onFocus={e=>e.target.style.borderColor="#FAFAFA"} onBlur={e=>e.target.style.borderColor="#1C1C1C"}/>
-            <button onClick={()=>setObStep(2)} style={{width:"100%",background:"#FAFAFA",color:"#080808",border:"none",borderRadius:10,padding:"13px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Continuer</button>
+            <input value={obData.prenom} onChange={e=>setObData(d=>({...d,prenom:e.target.value}))} placeholder="Prénom de votre agent" style={{width:"100%",background:"#F8F6F1",border:"1px solid #EAE5D8",borderRadius:8,color:"#14213D",padding:"12px 14px",fontSize:13,marginBottom:14}} onFocus={e=>e.target.style.borderColor="#14213D"} onBlur={e=>e.target.style.borderColor="#EAE5D8"}/>
+            <button onClick={()=>setObStep(2)} style={{width:"100%",background:"#14213D",color:"#FFFFFF",border:"none",borderRadius:8,padding:"13px",fontSize:13,fontWeight:500,cursor:"pointer",letterSpacing:"0.06em"}}>Continuer →</button>
           </div>
         )}
 
         {obStep===2&&(
           <div style={{animation:"fadeUp 0.4s ease"}}>
-            <h2 style={{fontSize:28,fontWeight:700,color:"#FAFAFA",marginBottom:8,letterSpacing:"-0.02em"}}>Votre profil</h2>
-            <p style={{fontSize:14,color:"#737373",marginBottom:24}}>{obData.prenom||"Votre agent"} personnalisera chaque interaction avec vos clients.</p>
+            <div style={{fontSize:11,color:"#C4A35A",fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:12}}>Votre profil</div>
+            <h2 style={{fontFamily:"var(--font-display),'Cormorant Garamond',Georgia,serif",fontSize:34,fontWeight:400,color:"#14213D",marginBottom:8,fontStyle:"italic"}}>Dernière étape</h2>
+            <p style={{fontSize:13,color:"#8A8372",marginBottom:22}}>{obData.prenom||"Votre agent"} personnalisera chaque interaction avec vos clients.</p>
             <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
               {[{l:"Prénom",k:"prenom",p:"Jean"},{l:"Nom",k:"nom",p:"Dupont"},{l:"Agence",k:"agence",p:"Agence Prestige Immobilier"},{l:"Email professionnel",k:"email",p:"jean@agence.fr"}].map(f=>(
                 <div key={f.k}>
-                  <div style={{fontSize:11,color:"#525252",marginBottom:5,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em"}}>{f.l}</div>
-                  <input value={(obData as any)[f.k]||""} onChange={e=>setObData(d=>({...d,[f.k]:e.target.value}))} placeholder={f.p} style={{width:"100%",background:"#0F0F0F",border:"1px solid #1C1C1C",borderRadius:10,color:"#FAFAFA",padding:"12px 14px",fontSize:14}} onFocus={e=>e.target.style.borderColor="#FAFAFA"} onBlur={e=>e.target.style.borderColor="#1C1C1C"}/>
+                  <div style={{fontSize:10,color:"#8A8372",marginBottom:5,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.1em"}}>{f.l}</div>
+                  <input value={(obData as any)[f.k]||""} onChange={e=>setObData(d=>({...d,[f.k]:e.target.value}))} placeholder={f.p} style={{width:"100%",background:"#F8F6F1",border:"1px solid #EAE5D8",borderRadius:8,color:"#14213D",padding:"11px 14px",fontSize:13}} onFocus={e=>e.target.style.borderColor="#14213D"} onBlur={e=>e.target.style.borderColor="#EAE5D8"}/>
                 </div>
               ))}
             </div>
@@ -460,8 +482,8 @@ export default function App() {
               localStorage.setItem("m_setup","1");
               localStorage.setItem("m_agent",JSON.stringify(a));
               setOnboarding(false);
-            }} disabled={!obData.agence} style={{width:"100%",background:obData.agence?"#FAFAFA":"#1C1C1C",color:obData.agence?"#080808":"#525252",border:"none",borderRadius:10,padding:"13px",fontSize:14,fontWeight:600,cursor:obData.agence?"pointer":"default",transition:"all 0.2s"}}>
-              Accéder à Mandatly
+            }} disabled={!obData.agence} style={{width:"100%",background:obData.agence?"#14213D":"#EAE5D8",color:obData.agence?"#FFFFFF":"#8A8372",border:"none",borderRadius:8,padding:"13px",fontSize:13,fontWeight:500,letterSpacing:"0.06em",cursor:obData.agence?"pointer":"default",transition:"all 0.2s"}}>
+              Accéder à Mandatly →
             </button>
           </div>
         )}
@@ -473,14 +495,32 @@ export default function App() {
   const NAVS = [{id:"dashboard",label:"Vue d'ensemble"},{id:"prospects",label:"Prospection"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
 
   return (
-    <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif",color:C.text,overflow:"hidden"}}>
-      <style>{`*{box-sizing:border-box;margin:0;padding:0;}::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-thumb{background:${C.border2};border-radius:2px;}@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}input:focus,select:focus,textarea:focus{outline:none;}`}</style>
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:BODY,color:C.text,overflow:"hidden"}}>
+      <style>{`
+        *{box-sizing:border-box;margin:0;padding:0;}
+        ::-webkit-scrollbar{width:4px;}
+        ::-webkit-scrollbar-track{background:transparent;}
+        ::-webkit-scrollbar-thumb{background:${C.border2};border-radius:2px;}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+        @keyframes shimmer{0%{opacity:0.5}50%{opacity:1}100%{opacity:0.5}}
+        input:focus,select:focus,textarea:focus{outline:none;}
+        button{font-family:${BODY};}
+        input,select,textarea{font-family:${BODY};}
+      `}</style>
 
       {/* NAV */}
-      <div style={{height:52,background:C.surface,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",padding:"0 20px",gap:4,flexShrink:0}}>
-        <div style={{display:"flex",gap:1,flex:1}}>
+      <div style={{height:54,background:C.card,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",padding:"0 24px",gap:0,flexShrink:0,boxShadow:dark?"none":`0 1px 0 ${C.border}`}}>
+        {/* Wordmark */}
+        <div style={{marginRight:28,flexShrink:0,display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:7,height:7,borderRadius:"50%",background:C.gold}}/>
+          <span style={{fontFamily:DISPLAY,fontSize:18,fontWeight:600,color:C.text,letterSpacing:"0.12em",textTransform:"uppercase"}}>Mandatly</span>
+        </div>
+        {/* Separator */}
+        <div style={{width:1,height:22,background:C.border,marginRight:20,flexShrink:0}}/>
+        <div style={{display:"flex",gap:0,flex:1,overflow:"hidden"}}>
           {NAVS.map(n=>(
-            <button key={n.id} onClick={()=>setNav(n.id)} style={{padding:"6px 12px",background:nav===n.id?C.accentBg:"transparent",border:`1px solid ${nav===n.id?C.border2:"transparent"}`,borderRadius:8,color:nav===n.id?C.text:C.muted,fontSize:13,fontWeight:nav===n.id?500:400,transition:"all 0.15s",whiteSpace:"nowrap",cursor:"pointer"}}>
+            <button key={n.id} onClick={()=>setNav(n.id)} style={{padding:"6px 13px",background:"transparent",border:"none",borderBottom:`2px solid ${nav===n.id?C.gold:"transparent"}`,color:nav===n.id?C.text:C.muted,fontSize:12,fontWeight:nav===n.id?600:400,letterSpacing:"0.03em",transition:"all 0.2s",whiteSpace:"nowrap",cursor:"pointer",marginBottom:-1}}>
               {n.label}
             </button>
           ))}
@@ -501,9 +541,9 @@ export default function App() {
             <div style={{width:6,height:6,borderRadius:"50%",background:C.green,animation:"pulse 2s infinite"}}/>
             {agent.prenom||"Agent IA"}
           </button>
-          <button onClick={()=>setDark(d=>!d)} style={{width:32,height:32,borderRadius:8,background:C.surface,border:`1px solid ${C.border}`,color:C.muted,fontSize:12,cursor:"pointer",transition:"all 0.15s"}}>{dark?"○":"●"}</button>
-          <div onClick={()=>setProfile(o=>!o)} style={{width:32,height:32,borderRadius:"50%",background:C.border2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,fontWeight:600,color:C.text}}>
-            {agent.prenom?.[0]||"A"}
+          <button onClick={()=>setDark(d=>!d)} title={dark?"Mode clair":"Mode sombre"} style={{width:32,height:32,borderRadius:8,background:"transparent",border:`1px solid ${C.border}`,color:C.muted,fontSize:13,cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>{dark?"☀":"☾"}</button>
+          <div onClick={()=>setProfile(o=>!o)} style={{width:32,height:32,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,fontWeight:600,color:dark?"#07111F":"#FFFFFF",flexShrink:0,letterSpacing:"0.05em"}}>
+            {agent.prenom?.[0]?.toUpperCase()||"A"}
           </div>
         </div>
       </div>
@@ -514,24 +554,24 @@ export default function App() {
         {/* DASHBOARD */}
         {nav==="dashboard"&&(
           <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.3s ease"}}>
-            <div style={{marginBottom:32}}>
-              <h1 style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em",marginBottom:6}}>Bonjour, {agent.prenom}</h1>
-              <p style={{color:C.muted,fontSize:15}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</p>
+            <div style={{marginBottom:36}}>
+              <div style={{fontSize:11,color:C.gold,fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:8}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</div>
+              <h1 style={{fontFamily:DISPLAY,fontSize:40,fontWeight:400,color:C.text,letterSpacing:"-0.01em",lineHeight:1.1,fontStyle:"italic"}}>Bonjour, {agent.prenom}</h1>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginBottom:32}}>
               {[{l:"Mandats",v:mandats.length,sub:"actifs",nav:"mandats"},{l:"CA encaissé",v:fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))+" €",sub:`/ ${fmt(transacs.reduce((a,t)=>a+t.montant,0))} prévu`,nav:"compta"},{l:"Prospects",v:prospects.length,sub:"identifiés",nav:"prospects"},{l:"Courriers",v:courrierHisto.length,sub:`${courrierHisto.filter(h=>h.statut==="repondu").length} répondu(s)`,nav:"courriers"},{l:"Rendez-vous",v:rdvs.length,sub:"à venir",nav:"agenda"}].map(k=>(
-                <div key={k.l} onClick={()=>setNav((k as any).nav)} style={{...card(),padding:"20px 24px",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.8"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
-                  <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{k.l}</div>
-                  <div style={{fontSize:28,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:2}}>{k.v}</div>
-                  <div style={{fontSize:12,color:C.muted}}>{k.sub}</div>
+                <div key={k.l} onClick={()=>setNav((k as any).nav)} style={{...card(),padding:"20px 24px",cursor:"pointer",transition:"transform 0.15s, box-shadow 0.15s"}} onMouseOver={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow=`0 1px 3px ${C.shadow}`;}} >
+                  <div style={{fontSize:10,color:C.gold,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:10}}>{k.l}</div>
+                  <div style={{fontFamily:DISPLAY,fontSize:30,fontWeight:600,color:C.text,letterSpacing:"-0.01em",marginBottom:4,lineHeight:1}}>{k.v}</div>
+                  <div style={{fontSize:11,color:C.muted,letterSpacing:"0.01em"}}>{k.sub}</div>
                 </div>
               ))}
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20,marginBottom:20}}>
               <div style={{...card(),padding:"24px"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>Mandats</div>
-                  <button onClick={()=>setNav("mandats")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Voir tout →</button>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Mandats</div>
+                  <button onClick={()=>setNav("mandats")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Voir tout →</button>
                 </div>
                 {mandats.map((m,i)=>(
                   <div key={m.id} onClick={()=>{setNav("mandats");setSelM(m);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<mandats.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
@@ -540,14 +580,14 @@ export default function App() {
                       <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.nom_propriete}</div>
                       <div style={{fontSize:11,color:C.muted}}>{m.proprietaire}</div>
                     </div>
-                    <div style={{fontSize:12,fontWeight:600,color:C.text,flexShrink:0}}>{fmt(m.prix)}€</div>
+                    <div style={{fontFamily:DISPLAY,fontSize:13,fontWeight:600,color:C.text,flexShrink:0}}>{fmt(m.prix)} €</div>
                   </div>
                 ))}
               </div>
               <div style={{...card(),padding:"24px"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>Prospects prioritaires</div>
-                  <button onClick={()=>setNav("prospects")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Prospecter →</button>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Prospects prioritaires</div>
+                  <button onClick={()=>setNav("prospects")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Prospecter →</button>
                 </div>
                 {prospects.filter(p=>p.score>=75).slice(0,5).map((p,i,arr)=>{
                   const col=p.score>=85?C.green:C.amber;
@@ -564,9 +604,9 @@ export default function App() {
                 {prospects.filter(p=>p.score>=75).length===0&&<div style={{fontSize:12,color:C.muted,textAlign:"center",paddingTop:16}}>Lancez une prospection DVF</div>}
               </div>
               <div style={{...card(),padding:"24px"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>Agenda</div>
-                  <button onClick={()=>setNav("agenda")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Voir tout →</button>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Agenda</div>
+                  <button onClick={()=>setNav("agenda")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Voir tout →</button>
                 </div>
                 {rdvs.sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4).map((r,i,arr)=>(
                   <div key={r.id} style={{display:"flex",gap:12,padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${C.border}`:"none"}}>
@@ -582,8 +622,8 @@ export default function App() {
             {/* COURRIERS ROW */}
             <div style={{...card(),padding:"24px"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-                <div style={{fontSize:13,fontWeight:600,color:C.text}}>Suivi courriers</div>
-                <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Gérer →</button>
+                <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Suivi courriers</div>
+                <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Gérer →</button>
               </div>
               {courrierHisto.length===0?(
                 <div style={{textAlign:"center",padding:"16px 0",color:C.muted,fontSize:12}}>Aucun courrier envoyé — générez votre premier courrier dans l&apos;onglet Courriers</div>
@@ -637,7 +677,7 @@ export default function App() {
             {/* LEFT PANEL */}
             <div style={{width:320,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",background:C.surface,flexShrink:0}}>
               <div style={{padding:"20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
-                <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>Prospection</div>
+                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:4}}>Prospection</div>
                 <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Identifiez les propriétaires prêts à vendre</div>
                 {/* Search */}
                 <div style={{display:"flex",gap:8,marginBottom:12}}>
@@ -812,7 +852,7 @@ export default function App() {
                     <div style={{fontSize:10,color:m.exclusif?C.green:C.muted,fontWeight:600,flexShrink:0,marginLeft:8}}>{m.exclusif?"EXC":""}</div>
                   </div>
                   <div style={{fontSize:12,color:C.muted,marginBottom:4}}>{m.proprietaire}</div>
-                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>{fmt(m.prix)} €</div>
+                  <div style={{fontFamily:DISPLAY,fontSize:14,fontWeight:600,color:C.text}}>{fmt(m.prix)} €</div>
                 </div>
               ))}
             </div>
@@ -831,8 +871,8 @@ export default function App() {
                     <>
                       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:24}}>
                         <div style={{flex:1,marginRight:20}}>
-                          <input value={selM.nom_propriete} onChange={e=>upd("nom_propriete",e.target.value)} style={{fontSize:24,fontWeight:700,color:C.text,letterSpacing:"-0.02em",background:"transparent",border:"none",width:"100%",marginBottom:4,padding:0}} onFocus={e=>e.target.style.borderBottom=`1px solid ${C.border}`} onBlur={e=>e.target.style.borderBottom="none"}/>
-                          <div style={{fontSize:13,color:C.muted}}>{selM.adresse}, {selM.ville}</div>
+                          <input value={selM.nom_propriete} onChange={e=>upd("nom_propriete",e.target.value)} style={{fontFamily:DISPLAY,fontSize:28,fontWeight:500,color:C.text,letterSpacing:"-0.01em",background:"transparent",border:"none",width:"100%",marginBottom:4,padding:0,fontStyle:"italic"}} onFocus={e=>e.target.style.borderBottom=`1px solid ${C.border}`} onBlur={e=>e.target.style.borderBottom="none"}/>
+                          <div style={{fontSize:12,color:C.muted,letterSpacing:"0.02em"}}>{selM.adresse}, {selM.ville}</div>
                         </div>
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}}>
                           <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),ville:selM.ville,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
@@ -938,7 +978,7 @@ export default function App() {
         {nav==="pipeline"&&(
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{padding:"16px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-              <div style={{fontSize:15,fontWeight:600,color:C.text}}>Pipeline</div>
+              <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em"}}>Pipeline</div>
               <div style={{fontSize:13,color:C.muted}}>CA signé <span style={{color:C.green,fontWeight:600}}>{fmt(mandats.filter(m=>m.pipeline==="signe"||m.pipeline==="vendu").reduce((a,m)=>a+Math.round(m.prix*m.honoraires/100),0))} €</span></div>
             </div>
             <div style={{flex:1,overflowX:"auto",display:"flex",gap:12,padding:20}}>
@@ -1120,7 +1160,7 @@ export default function App() {
             {/* LEFT: form */}
             <div style={{width:320,borderRight:`1px solid ${C.border}`,background:C.surface,display:"flex",flexDirection:"column",flexShrink:0}}>
               <div style={{padding:"20px 20px 16px",borderBottom:`1px solid ${C.border}`}}>
-                <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>Estimation</div>
+                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:4}}>Estimation</div>
                 <div style={{fontSize:12,color:C.muted}}>Avis de valeur basé sur les ventes DVF</div>
               </div>
               <div style={{flex:1,overflowY:"auto",padding:20,display:"flex",flexDirection:"column",gap:14}}>
@@ -1164,7 +1204,7 @@ export default function App() {
                   <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:28}}>
                     <div>
                       <div style={{fontSize:12,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:500}}>Avis de valeur — {estResult.ville}</div>
-                      <div style={{fontSize:40,fontWeight:700,color:C.text,letterSpacing:"-0.04em",lineHeight:1}}>{fmt(estResult.estimation)} €</div>
+                      <div style={{fontFamily:DISPLAY,fontSize:48,fontWeight:500,color:C.text,letterSpacing:"-0.02em",lineHeight:1}}>{fmt(estResult.estimation)} €</div>
                       <div style={{fontSize:14,color:C.muted,marginTop:6}}>Fourchette {fmt(estResult.fourchette_bas)} — {fmt(estResult.fourchette_haut)} €</div>
                     </div>
                     <button onClick={()=>{
@@ -1286,7 +1326,7 @@ export default function App() {
             {/* LEFT: prospects list */}
             <div style={{width:300,borderRight:`1px solid ${C.border}`,background:C.surface,display:"flex",flexDirection:"column",flexShrink:0}}>
               <div style={{padding:"20px",borderBottom:`1px solid ${C.border}`}}>
-                <div style={{fontSize:15,fontWeight:600,color:C.text,marginBottom:4}}>Courriers</div>
+                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:4}}>Courriers</div>
                 <div style={{fontSize:12,color:C.muted}}>Prospection postale personnalisée</div>
               </div>
               <div style={{flex:1,overflowY:"auto"}}>
@@ -1326,7 +1366,7 @@ export default function App() {
               ):(
                 <>
                   <div style={{marginBottom:24}}>
-                    <div style={{fontSize:20,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>{courrier.prospect.adresse}</div>
+                    <div style={{fontFamily:DISPLAY,fontSize:22,fontWeight:500,color:C.text,letterSpacing:"0",marginBottom:4,fontStyle:"italic"}}>{courrier.prospect.adresse}</div>
                     <div style={{fontSize:13,color:C.muted,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                       <span>{courrier.prospect.ville} · Score {courrier.prospect.score}/100</span>
                       {courrier.prospect.proprietaire_nom&&(
@@ -1458,7 +1498,7 @@ export default function App() {
           <div onClick={()=>setEmailModal(null)} style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <div onClick={e=>e.stopPropagation()} style={{width:560,background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:28,boxShadow:`0 24px 64px ${C.shadow}`,animation:"fadeUp 0.2s ease"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-                <div style={{fontSize:15,fontWeight:600,color:C.text}}>Nouveau message</div>
+                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em"}}>Nouveau message</div>
                 <button onClick={()=>setEmailModal(null)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
