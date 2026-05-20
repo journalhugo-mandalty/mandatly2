@@ -23,8 +23,8 @@ export async function GET(req: NextRequest) {
     const url =
       `https://data.ademe.fr/data-fair/api/v1/datasets/${DATASET}/lines` +
       `?size=100&${qParam}` +
-      `&sort=date_reception_dpe:-1` +
-      `&select=adresse_ban,etiquette_dpe,date_reception_dpe,_geopoint,surface_habitable_logement,nom_commune_ban`;
+      `&sort=-date_reception_dpe` +
+      `&select=adresse_ban,etiquette_dpe,etiquette_ges,date_reception_dpe,_geopoint,surface_habitable_logement,nom_commune_ban,code_insee_ban`;
 
     const res = await fetch(url, {
       headers: { Accept: "application/json" },

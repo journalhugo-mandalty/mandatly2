@@ -4,25 +4,27 @@ import { getSupabase } from "../lib/supabase";
 
 const MapComponent = lazy(() => import("./map-component"));
 
-// ── Prospection DVF + DPE via routes serveur ──────────────────
+// ── Prospection DVF + DPE en parallèle ────────────────────────
 async function lancerDVF(ville: string) {
-  // Route serveur: CSV officiels files.data.gouv.fr (centaines de transactions/ville)
-  const dvfRes = await fetch(`/api/dvf?ville=${encodeURIComponent(ville)}`);
-  const dvfData = await dvfRes.json();
-  if (!dvfRes.ok) throw new Error(dvfData.error || "Erreur DVF");
+  // DVF (CSV officiels) + DPE (ADEME) lancés en simultané
+  const [dvfResult, dpeResult] = await Promise.allSettled([
+    fetch(`/api/dvf?ville=${encodeURIComponent(ville)}`).then(r => r.json()),
+    fetch(`/api/dpe?commune=${encodeURIComponent(ville)}`).then(r => r.json()),
+  ]);
 
-  // DPE en parallèle (signaux loi Climat — F/G = vente probable)
-  let dpeProspects: any[] = [];
-  try {
-    const insee = dvfData.insee || "";
-    const dpeRes = await fetch(
-      `/api/dpe?commune=${encodeURIComponent(dvfData.ville)}&lat=${dvfData.lat}&lng=${dvfData.lng}${insee ? `&insee=${insee}` : ""}`
-    );
-    if (dpeRes.ok) {
-      const dpeData = await dpeRes.json();
-      dpeProspects = dpeData.prospects || [];
-    }
-  } catch {}
+  const dvfData = dvfResult.status === "fulfilled" ? dvfResult.value : null;
+  const dpeData = dpeResult.status === "fulfilled" ? dpeResult.value : null;
+
+  if (!dvfData || dvfData.error) throw new Error(dvfData?.error || "Ville introuvable ou données indisponibles");
+
+  // Re-fetch DPE with exact INSEE code if available (meilleure précision)
+  let dpeProspects: any[] = dpeData?.prospects || [];
+  if (dvfData.insee && dpeProspects.length === 0) {
+    try {
+      const r = await fetch(`/api/dpe?commune=${encodeURIComponent(dvfData.ville)}&insee=${dvfData.insee}&lat=${dvfData.lat}&lng=${dvfData.lng}`);
+      if (r.ok) { const d = await r.json(); dpeProspects = d.prospects || []; }
+    } catch {}
+  }
 
   const allProspects = [...(dvfData.prospects || []), ...dpeProspects]
     .sort((a: any, b: any) => b.score - a.score);
