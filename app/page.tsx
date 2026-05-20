@@ -455,8 +455,8 @@ export default function App() {
               <h1 style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em",marginBottom:6}}>Bonjour, {agent.prenom}</h1>
               <p style={{color:C.muted,fontSize:15}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</p>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:32}}>
-              {[{l:"Mandats",v:mandats.length,sub:"actifs",nav:"mandats"},{l:"CA encaissé",v:fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))+" €",sub:`/ ${fmt(transacs.reduce((a,t)=>a+t.montant,0))} prévu`,nav:"compta"},{l:"Prospects",v:prospects.length,sub:"identifiés",nav:"prospects"},{l:"Rendez-vous",v:rdvs.length,sub:"à venir",nav:"agenda"}].map(k=>(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginBottom:32}}>
+              {[{l:"Mandats",v:mandats.length,sub:"actifs",nav:"mandats"},{l:"CA encaissé",v:fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))+" €",sub:`/ ${fmt(transacs.reduce((a,t)=>a+t.montant,0))} prévu`,nav:"compta"},{l:"Prospects",v:prospects.length,sub:"identifiés",nav:"prospects"},{l:"Courriers",v:courrierHisto.length,sub:`${courrierHisto.filter(h=>h.statut==="repondu").length} répondu(s)`,nav:"courriers"},{l:"Rendez-vous",v:rdvs.length,sub:"à venir",nav:"agenda"}].map(k=>(
                 <div key={k.l} onClick={()=>setNav((k as any).nav)} style={{...card(),padding:"20px 24px",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.8"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{k.l}</div>
                   <div style={{fontSize:28,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:2}}>{k.v}</div>
@@ -464,7 +464,7 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20,marginBottom:20}}>
               <div style={{...card(),padding:"24px"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
                   <div style={{fontSize:13,fontWeight:600,color:C.text}}>Mandats</div>
@@ -515,6 +515,55 @@ export default function App() {
                   </div>
                 ))}
               </div>
+            </div>
+            {/* COURRIERS ROW */}
+            <div style={{...card(),padding:"24px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.text}}>Suivi courriers</div>
+                <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer"}}>Gérer →</button>
+              </div>
+              {courrierHisto.length===0?(
+                <div style={{textAlign:"center",padding:"16px 0",color:C.muted,fontSize:12}}>Aucun courrier envoyé — générez votre premier courrier dans l&apos;onglet Courriers</div>
+              ):(
+                <>
+                  {/* KPI mini-stats */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
+                    {[
+                      {l:"Envoyés",v:courrierHisto.length,color:C.blue},
+                      {l:"En attente",v:courrierHisto.filter(h=>h.statut==="envoye").length,color:C.amber},
+                      {l:"Répondus",v:courrierHisto.filter(h=>h.statut==="repondu").length,color:C.green},
+                    ].map(s=>(
+                      <div key={s.l} style={{background:s.color+"0D",border:`1px solid ${s.color}20`,borderRadius:10,padding:"12px 16px"}}>
+                        <div style={{fontSize:10,color:s.color,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{s.l}</div>
+                        <div style={{fontSize:24,fontWeight:700,color:s.color}}>{s.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Recent history */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:8}}>
+                    {["Adresse","Type","Date","Statut","Action"].map(h=>(
+                      <div key={h} style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</div>
+                    ))}
+                  </div>
+                  {courrierHisto.slice(0,6).map(h=>(
+                    <div key={h.id} style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,padding:"9px 0",borderTop:`1px solid ${C.border}`,alignItems:"center"}}>
+                      <div style={{fontSize:12,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.prospect_adresse}</div>
+                      <div style={{fontSize:12,color:C.muted}}>{h.template==="prospection"?"Prospection":h.template==="relance"?"Relance":"Offre"}</div>
+                      <div style={{fontSize:12,color:C.muted}}>{h.date}</div>
+                      <div>
+                        <span style={{fontSize:10,fontWeight:600,color:h.statut==="repondu"?C.green:h.statut==="relance"?C.amber:C.blue,background:(h.statut==="repondu"?C.green:h.statut==="relance"?C.amber:C.blue)+"15",borderRadius:4,padding:"2px 7px"}}>
+                          {h.statut==="repondu"?"Répondu":h.statut==="relance"?"Relance":"Envoyé"}
+                        </span>
+                      </div>
+                      <div style={{display:"flex",gap:4}}>
+                        {h.statut==="envoye"&&<button onClick={()=>setCourrierHisto(hs=>hs.map(x=>x.id===h.id?{...x,statut:"repondu"}:x))} style={{fontSize:10,background:C.green+"15",color:C.green,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Répondu</button>}
+                        {h.statut==="envoye"&&<button onClick={()=>setCourrierHisto(hs=>hs.map(x=>x.id===h.id?{...x,statut:"relance"}:x))} style={{fontSize:10,background:C.amber+"15",color:C.amber,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Relancer</button>}
+                        {h.statut!=="envoye"&&<button onClick={()=>{setCourrier({prospect:{id:h.prospect_id,adresse:h.prospect_adresse,ville:h.prospect_ville,score:0,source:"DVF",status:"",notes:""},template:h.template==="relance"?"relance":"relance",content:"",loading:false});setNav("courriers");}} style={{fontSize:10,background:C.surface,border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Courrier →</button>}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           </div>
         )}
