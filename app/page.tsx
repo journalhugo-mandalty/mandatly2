@@ -169,12 +169,13 @@ async function lancerEstimation(type: string, surface: number, ville: string, et
 }
 
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; };
-type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; };
+type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; };
 type Acheteur = { id:number; nom:string; email:string; tel:string; budget_min:number; budget_max:number; surface_min:number; chambres_min:number; types:string[]; villes:string[]; notes:string; };
 type RDV = { id:number; titre:string; client:string; tel:string; date:string; heure:string; duree:number; type:string; bien:string; };
 type Msg = { id:number; role:"user"|"agent"; text:string; };
 type Transac = { id:number; mandat_id:number; label:string; adresse:string; montant:number; statut:"en_attente"|"encaisse"|"annule"; date_encaissement:string; };
 type CourrierModal = { prospect:Prospect; template:string; content:string; loading:boolean; };
+type CourrierHistorique = { id:number; prospect_id:any; prospect_adresse:string; prospect_ville:string; date:string; template:string; statut:"envoye"|"repondu"|"relance"; content:string; };
 
 const TRANSACS_INIT: Transac[] = [
   {id:1,mandat_id:1,label:"Villa des Acacias",adresse:"14 rue des Acacias, Bordeaux",montant:24250,statut:"en_attente",date_encaissement:""},
@@ -247,6 +248,11 @@ export default function App() {
   });
   // Courrier modal
   const [courrier, setCourrier] = useState<CourrierModal|null>(null);
+  // Courrier historique
+  const [courrierHisto, setCourrierHisto] = useState<CourrierHistorique[]>(()=>{
+    if(typeof window==="undefined") return [];
+    try{const s=localStorage.getItem("m_courriers");return s?JSON.parse(s):[];}catch{return [];}
+  });
   // Propriétaire lookup
   const [propData, setPropData] = useState<Record<string,any>>({});
   const [propLoading, setPropLoading] = useState<string|null>(null);
@@ -268,6 +274,7 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("m_transacs",JSON.stringify(transacs));},[transacs]);
   useEffect(()=>{localStorage.setItem("m_acheteurs",JSON.stringify(acheteurs));},[acheteurs]);
   useEffect(()=>{localStorage.setItem("m_rdvs",JSON.stringify(rdvs));},[rdvs]);
+  useEffect(()=>{localStorage.setItem("m_courriers",JSON.stringify(courrierHisto));},[courrierHisto]);
 
   const C = dark ? {
     bg:"#080808",surface:"#0F0F0F",card:"#141414",border:"#1C1C1C",border2:"#242424",
@@ -284,6 +291,34 @@ export default function App() {
   };
 
   const card = (p:any={}) => ({background:C.card,border:`1px solid ${C.border}`,borderRadius:12,...p});
+
+  // Progressive background enrichment: resolve proprietaire for each prospect (batches of 3)
+  const enrichirProspects = useCallback(async (list: Prospect[]) => {
+    const withCoords = list.filter(p => p.lat && p.lng);
+    // Mark all as loading
+    setProspects(prev => prev.map(p => withCoords.find(x => x.id === p.id) ? {...p, proprietaire_chargement: true} : p));
+    // Process in batches of 3
+    for (let i = 0; i < withCoords.length; i += 3) {
+      const batch = withCoords.slice(i, i + 3);
+      await Promise.allSettled(batch.map(async (p) => {
+        try {
+          const r = await fetch(`/api/proprietaire?lat=${p.lat}&lng=${p.lng}&adresse=${encodeURIComponent(p.adresse + " " + p.ville)}`);
+          if (!r.ok) return;
+          const d = await r.json();
+          setProspects(prev => prev.map(x => x.id === p.id ? {
+            ...x,
+            proprietaire_nom: d.proprietaire_nom || "",
+            civilite: d.civilite || "",
+            proprietaire_source: d.proprietaire_source || "inconnu",
+            proprietaire_chargement: false,
+          } : x));
+          setPropData(prev => ({...prev, [String(p.id)]: d}));
+        } catch {
+          setProspects(prev => prev.map(x => x.id === p.id ? {...x, proprietaire_chargement: false} : x));
+        }
+      }));
+    }
+  }, []);
 
   const sendMsg = useCallback(async()=>{
     if(!input.trim()) return;
@@ -500,7 +535,11 @@ export default function App() {
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
-                      setProspects(data.prospects || []);
+                      const ps = data.prospects || [];
+                      setProspects(ps);
+                      setDvfLoading(false);
+                      enrichirProspects(ps);
+                      return;
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
                   }} placeholder="Code postal ou commune..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
@@ -510,10 +549,14 @@ export default function App() {
                     try {
                       const data = await lancerDVF(prospSecteur);
                       setMapCenter([parseFloat(data.lat), parseFloat(data.lng)]);
-                      setProspects(data.prospects || []);
+                      const ps = data.prospects || [];
+                      setProspects(ps);
+                      setDvfLoading(false);
+                      enrichirProspects(ps);
+                      return;
                     } catch(err:any){setDvfError(err.message||"Erreur API");}
                     setDvfLoading(false);
-                  }} style={{background:dvfLoading?C.border:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:500,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0}}>
+                  }} style={{background:dvfLoading?C.border:C.accent,color:dvfLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:500,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0}}>
                     {dvfLoading?"...":"→"}
                   </button>
                 </div>
@@ -544,7 +587,22 @@ export default function App() {
                             <div style={{fontSize:11,color:C.muted}}>{p.ville}</div>
                           </div>
                         </div>
-                        <div style={{fontSize:11,color:C.muted,marginLeft:38}}>{p.notes}</div>
+                        <div style={{fontSize:11,color:C.muted,marginLeft:38,marginBottom:4}}>{p.notes}</div>
+                        {/* Proprietaire enrichment display */}
+                        <div style={{marginLeft:38,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                          {p.proprietaire_chargement?(
+                            <span style={{fontSize:10,color:C.muted}}>Identification...</span>
+                          ):p.proprietaire_nom?(
+                            <>
+                              <span style={{fontSize:11,fontWeight:500,color:C.text}}>{p.civilite?p.civilite+" ":""}{p.proprietaire_nom}</span>
+                              <span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>
+                                {p.proprietaire_source==="sci+dirigeant"?"SCI + dirigeant":p.proprietaire_source==="sirene+dirigeant"?"Sirene dirigeant":p.proprietaire_source==="sci"?"SCI":p.proprietaire_source==="sirene"?"Sirene":p.proprietaire_source==="cadastre"?"Cadastre":"Inconnu"}
+                              </span>
+                            </>
+                          ):p.proprietaire_source&&!p.proprietaire_chargement?(
+                            <span style={{fontSize:10,color:C.muted}}>Madame, Monsieur</span>
+                          ):null}
+                        </div>
                         {selProspect?.id===p.id&&propData[String(p.id)]&&(
                           <div style={{marginTop:10,marginLeft:38,padding:"10px 12px",background:C.card,borderRadius:8,border:`1px solid ${C.border}`}}>
                             {propData[String(p.id)].parcelles?.length>0&&(
@@ -1092,8 +1150,11 @@ export default function App() {
                           <div style={{width:26,height:26,borderRadius:6,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
-                            <div style={{fontSize:11,color:C.muted}}>{p.ville}</div>
+                            <div style={{fontSize:11,color:C.muted}}>{p.proprietaire_nom?`${p.civilite?p.civilite+" ":""}${p.proprietaire_nom}`:p.ville}</div>
                           </div>
+                          {courrierHisto.some(h=>h.prospect_id===p.id)&&(
+                            <div style={{width:7,height:7,borderRadius:"50%",background:courrierHisto.find(h=>h.prospect_id===p.id)?.statut==="repondu"?C.green:C.amber,flexShrink:0}}/>
+                          )}
                         </div>
                       </div>
                     );
@@ -1129,10 +1190,13 @@ export default function App() {
                   </div>
                   <button disabled={courrier.loading} onClick={async()=>{
                     setCourrier(c=>c?{...c,loading:true,content:""}:null);
+                    const p = courrier.prospect;
+                    const civNom = p.proprietaire_nom ? `${p.civilite?p.civilite+" ":""}${p.proprietaire_nom}` : "";
+                    const salutation = civNom || "Madame, Monsieur";
                     const templates:Record<string,string> = {
-                      prospection:`Rédige un courrier de prospection immobilière pour un propriétaire habitant au ${courrier.prospect.adresse}, ${courrier.prospect.ville}. Le bien a été acheté il y a environ ${(courrier.prospect as any).anciennete||"plusieurs"} années. ${courrier.prospect.notes}. Ton nom est ${agent.prenom} ${agent.nom} de ${agent.agence}. Sois professionnel, personnalisé, 3 paragraphes maximum. Commence directement par la lettre (Madame, Monsieur,...).`,
-                      relance:`Rédige un courrier de relance pour un propriétaire au ${courrier.prospect.adresse}, ${courrier.prospect.ville} que j'ai déjà contacté il y a 3 semaines sans réponse. ${courrier.prospect.notes}. Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Bref et percutant, 2 paragraphes.`,
-                      offre:`Rédige un courrier informant le propriétaire au ${courrier.prospect.adresse}, ${courrier.prospect.ville} qu'un acheteur sérieux recherche exactement son type de bien dans ce secteur. ${courrier.prospect.notes}. Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}.`,
+                      prospection:`Rédige un courrier de prospection immobilière pour ${civNom?"le propriétaire "+civNom:"un propriétaire"} habitant au ${p.adresse}, ${p.ville}. Le bien a été acheté il y a environ ${p.anciennete||"plusieurs"} années. ${p.notes}. Ton nom est ${agent.prenom} ${agent.nom} de ${agent.agence}. Sois professionnel, personnalisé, 3 paragraphes maximum. Commence directement par la lettre avec "${salutation}," en première ligne.`,
+                      relance:`Rédige un courrier de relance pour ${civNom?civNom:"un propriétaire"} au ${p.adresse}, ${p.ville} que j'ai déjà contacté il y a 3 semaines sans réponse. ${p.notes}. Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Bref et percutant, 2 paragraphes. Commence par "${salutation},".`,
+                      offre:`Rédige un courrier informant ${civNom?civNom:"le propriétaire"} au ${p.adresse}, ${p.ville} qu'un acheteur sérieux recherche exactement son type de bien dans ce secteur. ${p.notes}. Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Commence par "${salutation},".`,
                     };
                     try {
                       const res = await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
@@ -1149,22 +1213,49 @@ export default function App() {
                     {courrier.loading?"Génération en cours...":"Générer avec Lucas"}
                   </button>
                   {courrier.content&&(
-                    <div style={{...card(),padding:"24px"}}>
+                    <div style={{...card(),padding:"24px",marginBottom:20}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
                         <div style={{fontSize:13,fontWeight:600,color:C.text}}>Courrier généré</div>
                         <div style={{display:"flex",gap:8}}>
                           <button onClick={()=>navigator.clipboard.writeText(courrier.content)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",fontSize:11,color:C.muted,cursor:"pointer"}}>Copier</button>
                           <button onClick={()=>{
+                            const histo: CourrierHistorique = {id:Date.now(),prospect_id:courrier.prospect.id,prospect_adresse:courrier.prospect.adresse,prospect_ville:courrier.prospect.ville,date:new Date().toLocaleDateString("fr-FR"),template:courrier.template,statut:"envoye",content:courrier.content};
+                            setCourrierHisto(h=>[histo,...h.filter(x=>!(x.prospect_id===courrier.prospect.id&&x.template===courrier.template))]);
                             const w=window.open("","_blank");
                             if(!w) return;
                             w.document.write(`<!DOCTYPE html><html><head><title>Courrier — ${courrier.prospect.adresse}</title><style>body{font-family:Georgia,serif;max-width:600px;margin:60px auto;color:#111;line-height:1.7;font-size:14px}pre{white-space:pre-wrap;font-family:inherit}@media print{button{display:none}}</style></head><body><pre>${courrier.content}</pre><br><br><p style="font-size:11px;color:#888">Généré le ${new Date().toLocaleDateString("fr-FR")} par Mandatly · ${agent.prenom} ${agent.nom} — ${agent.agence}</p><script>window.print();</script></body></html>`);
                             w.document.close();
-                          }} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Imprimer</button>
+                          }} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:500,cursor:"pointer"}}>Imprimer + Enregistrer</button>
                         </div>
                       </div>
                       <div style={{fontSize:13,color:C.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{courrier.content}</div>
                     </div>
                   )}
+                  {/* Historique courriers pour ce prospect */}
+                  {(()=>{
+                    const hist = courrierHisto.filter(h=>h.prospect_id===courrier.prospect.id);
+                    if(!hist.length) return null;
+                    return(
+                      <div style={{...card(),padding:"20px"}}>
+                        <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:14}}>Historique</div>
+                        {hist.map(h=>(
+                          <div key={h.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:`1px solid ${C.border}`}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:12,color:C.text,fontWeight:500}}>{h.template==="prospection"?"Prospection":h.template==="relance"?"Relance":"Offre d'achat"}</div>
+                              <div style={{fontSize:11,color:C.muted}}>{h.date}</div>
+                            </div>
+                            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                              <span style={{fontSize:10,fontWeight:600,color:h.statut==="repondu"?C.green:h.statut==="relance"?C.amber:C.blue,background:(h.statut==="repondu"?C.green:h.statut==="relance"?C.amber:C.blue)+"15",borderRadius:4,padding:"2px 7px"}}>
+                                {h.statut==="repondu"?"Répondu":h.statut==="relance"?"Relance":"Envoyé"}
+                              </span>
+                              {h.statut==="envoye"&&<button onClick={()=>setCourrierHisto(hs=>hs.map(x=>x.id===h.id?{...x,statut:"repondu"}:x))} style={{fontSize:10,background:C.green+"15",color:C.green,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Répondu</button>}
+                              {h.statut==="envoye"&&<button onClick={()=>setCourrierHisto(hs=>hs.map(x=>x.id===h.id?{...x,statut:"relance"}:x))} style={{fontSize:10,background:C.amber+"15",color:C.amber,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Relancer</button>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
