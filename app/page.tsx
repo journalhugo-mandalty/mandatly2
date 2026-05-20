@@ -591,16 +591,18 @@ export default function App() {
                         {/* Proprietaire enrichment display */}
                         <div style={{marginLeft:38,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                           {p.proprietaire_chargement?(
-                            <span style={{fontSize:10,color:C.muted}}>Identification...</span>
+                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Identification...</span>
                           ):p.proprietaire_nom?(
                             <>
-                              <span style={{fontSize:11,fontWeight:500,color:C.text}}>{p.civilite?p.civilite+" ":""}{p.proprietaire_nom}</span>
+                              <span style={{fontSize:11,fontWeight:500,color:C.text}}>{p.proprietaire_nom}</span>
                               <span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>
-                                {p.proprietaire_source==="sci+dirigeant"?"SCI + dirigeant":p.proprietaire_source==="sirene+dirigeant"?"Sirene dirigeant":p.proprietaire_source==="sci"?"SCI":p.proprietaire_source==="sirene"?"Sirene":p.proprietaire_source==="cadastre"?"Cadastre":"Inconnu"}
+                                {p.proprietaire_source==="sci+dirigeant"?"SCI · dirigeant":p.proprietaire_source==="sirene+dirigeant"?"Sirene · dirigeant":p.proprietaire_source==="sci"?"SCI":p.proprietaire_source==="sirene"?"Sirene":p.proprietaire_source==="cadastre"?"Cadastre":"Inconnu"}
                               </span>
                             </>
-                          ):p.proprietaire_source&&!p.proprietaire_chargement?(
-                            <span style={{fontSize:10,color:C.muted}}>Madame, Monsieur</span>
+                          ):p.proprietaire_source&&p.proprietaire_source!=="inconnu"?(
+                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Particulier · contact inconnu</span>
+                          ):p.proprietaire_source==="inconnu"?(
+                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Inconnu</span>
                           ):null}
                         </div>
                         {selProspect?.id===p.id&&propData[String(p.id)]&&(
@@ -1150,7 +1152,7 @@ export default function App() {
                           <div style={{width:26,height:26,borderRadius:6,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
-                            <div style={{fontSize:11,color:C.muted}}>{p.proprietaire_nom?`${p.civilite?p.civilite+" ":""}${p.proprietaire_nom}`:p.ville}</div>
+                            <div style={{fontSize:11,color:C.muted}}>{p.proprietaire_nom||p.ville}</div>
                           </div>
                           {courrierHisto.some(h=>h.prospect_id===p.id)&&(
                             <div style={{width:7,height:7,borderRadius:"50%",background:courrierHisto.find(h=>h.prospect_id===p.id)?.statut==="repondu"?C.green:C.amber,flexShrink:0}}/>
@@ -1175,7 +1177,15 @@ export default function App() {
                 <>
                   <div style={{marginBottom:24}}>
                     <div style={{fontSize:20,fontWeight:700,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>{courrier.prospect.adresse}</div>
-                    <div style={{fontSize:13,color:C.muted}}>{courrier.prospect.ville} · Score {courrier.prospect.score}/100</div>
+                    <div style={{fontSize:13,color:C.muted,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                      <span>{courrier.prospect.ville} · Score {courrier.prospect.score}/100</span>
+                      {courrier.prospect.proprietaire_nom&&(
+                        <span style={{fontSize:12,fontWeight:500,color:C.text,background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"2px 8px"}}>{courrier.prospect.proprietaire_nom}</span>
+                      )}
+                      {courrier.prospect.proprietaire_source&&(
+                        <span style={{fontSize:10,color:C.muted}}>via {courrier.prospect.proprietaire_source==="sci+dirigeant"?"SCI":courrier.prospect.proprietaire_source==="sirene+dirigeant"?"Sirene":"Sirene"}</span>
+                      )}
+                    </div>
                   </div>
                   <div style={{marginBottom:20}}>
                     <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Type de courrier</div>
@@ -1191,12 +1201,11 @@ export default function App() {
                   <button disabled={courrier.loading} onClick={async()=>{
                     setCourrier(c=>c?{...c,loading:true,content:""}:null);
                     const p = courrier.prospect;
-                    const civNom = p.proprietaire_nom ? `${p.civilite?p.civilite+" ":""}${p.proprietaire_nom}` : "";
-                    const salutation = civNom || "Madame, Monsieur";
+                    const nomCtx = p.proprietaire_nom ? ` Le propriétaire identifié est ${p.proprietaire_nom}${p.proprietaire_source?"  (source : "+p.proprietaire_source+")":""}.` : "";
                     const templates:Record<string,string> = {
-                      prospection:`Rédige un courrier de prospection immobilière pour ${civNom?"le propriétaire "+civNom:"un propriétaire"} habitant au ${p.adresse}, ${p.ville}. Le bien a été acheté il y a environ ${p.anciennete||"plusieurs"} années. ${p.notes}. Ton nom est ${agent.prenom} ${agent.nom} de ${agent.agence}. Sois professionnel, personnalisé, 3 paragraphes maximum. Commence directement par la lettre avec "${salutation}," en première ligne.`,
-                      relance:`Rédige un courrier de relance pour ${civNom?civNom:"un propriétaire"} au ${p.adresse}, ${p.ville} que j'ai déjà contacté il y a 3 semaines sans réponse. ${p.notes}. Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Bref et percutant, 2 paragraphes. Commence par "${salutation},".`,
-                      offre:`Rédige un courrier informant ${civNom?civNom:"le propriétaire"} au ${p.adresse}, ${p.ville} qu'un acheteur sérieux recherche exactement son type de bien dans ce secteur. ${p.notes}. Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Commence par "${salutation},".`,
+                      prospection:`Rédige un courrier de prospection immobilière pour un propriétaire habitant au ${p.adresse}, ${p.ville}. Le bien a été acheté il y a environ ${p.anciennete||"plusieurs"} années. ${p.notes}.${nomCtx} Ton nom est ${agent.prenom} ${agent.nom} de ${agent.agence}. Sois professionnel, personnalisé, 3 paragraphes maximum. Commence OBLIGATOIREMENT par "Madame, Monsieur," sur la première ligne.`,
+                      relance:`Rédige un courrier de relance pour un propriétaire au ${p.adresse}, ${p.ville} que j'ai déjà contacté il y a 3 semaines sans réponse. ${p.notes}.${nomCtx} Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Bref et percutant, 2 paragraphes. Commence par "Madame, Monsieur,".`,
+                      offre:`Rédige un courrier informant le propriétaire au ${p.adresse}, ${p.ville} qu'un acheteur sérieux recherche exactement son type de bien dans ce secteur. ${p.notes}.${nomCtx} Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Commence par "Madame, Monsieur,".`,
                     };
                     try {
                       const res = await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({

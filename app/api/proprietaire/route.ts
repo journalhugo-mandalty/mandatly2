@@ -61,9 +61,11 @@ export async function GET(req: NextRequest) {
       const dirigeants: any[] = target.dirigeants || [];
       if (dirigeants.length > 0) {
         const dg = dirigeants[0];
+        // Clean nom: strip parenthetical aliases like "DUPONT (DUPONT-MARTIN)"
+        const cleanNom = (dg.nom || "").replace(/\s*\([^)]+\)/g, "").trim();
         const prenom = (dg.prenoms || "").split(" ")[0] || "";
-        proprietaire_nom = [dg.nom, prenom].filter(Boolean).join(" ");
-        civilite = prenom ? "M." : "";
+        proprietaire_nom = [cleanNom, prenom].filter(Boolean).join(" ");
+        civilite = ""; // No gender field in Sirene — leave blank
         proprietaire_source = sci ? "sci+dirigeant" : "sirene+dirigeant";
       } else {
         proprietaire_nom = target.nom_complet || target.nom_raison_sociale || "";
