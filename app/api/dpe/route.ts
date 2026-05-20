@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
       `https://data.ademe.fr/data-fair/api/v1/datasets/${DATASET}/lines` +
       `?size=100&${qParam}` +
       `&sort=-date_reception_dpe` +
-      `&select=adresse_ban,etiquette_dpe,etiquette_ges,date_reception_dpe,_geopoint,surface_habitable_logement,nom_commune_ban,code_insee_ban`;
+      `&select=adresse_ban,etiquette_dpe,etiquette_ges,date_reception_dpe,_geopoint,surface_habitable_logement,nom_commune_ban,code_insee_ban,type_batiment,nom_residence`;
 
     const res = await fetch(url, {
       headers: { Accept: "application/json" },
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
           score,
           source: "DPE",
           status: score >= 65 ? "À contacter" : "À surveiller",
-          notes: `DPE ${classe} · ${dateReception.toLocaleDateString("fr-FR")} · ${d.surface_habitable_logement || "?"}m²`,
+          notes: `DPE ${classe} · ${dateReception.toLocaleDateString("fr-FR")} · ${d.surface_habitable_logement || "?"}m²${d.type_batiment?" · "+d.type_batiment:""}${d.nom_residence?" · "+d.nom_residence:""}`,
           lat: dpeLat,
           lng: dpeLng,
           classe_dpe: classe,
