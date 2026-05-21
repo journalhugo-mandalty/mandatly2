@@ -17,11 +17,36 @@ async function getZoneId(ville: string): Promise<{ zoneId: string; nomVille: str
   return { zoneId, nomVille: first.name, lat, lng };
 }
 
+function toNumber(v: unknown): number | null {
+  if (typeof v === "number") return v;
+  if (Array.isArray(v) && v.length > 0) {
+    const nums = (v as unknown[]).filter(x => typeof x === "number") as number[];
+    if (!nums.length) return null;
+    // For price ranges (new builds), return the average
+    return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
+  }
+  return null;
+}
+
+function formatAgence(a: any): string {
+  if (a.accountDisplayName && a.accountDisplayName !== "null") return a.accountDisplayName;
+  const type = a.accountType || "";
+  if (type === "agency") return "Agence";
+  if (type === "developer") return "Promoteur";
+  if (type === "individual") return "Particulier";
+  return type || "Agence";
+}
+
+function bestPhotoUrl(photos: any[]): string | null {
+  if (!photos?.length) return null;
+  const p = photos[0];
+  return p.url_photo || p.url || p.thumb_url || null;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const ville = searchParams.get("ville") || "";
   const size = Math.min(parseInt(searchParams.get("size") || "60"), 100);
-  const filterType = searchParams.get("type") || "buy"; // buy | rent
 
   if (!ville) {
     return NextResponse.json({ error: "ville requis" }, { status: 400 });
@@ -36,8 +61,9 @@ export async function GET(req: NextRequest) {
     const filters = {
       size,
       from: 0,
-      filterType,
+      filterType: "buy",
       propertyType: ["house", "flat"],
+      minPrice: 200000,
       zoneIdsByTypes: { zoneIds: [zone.zoneId] },
     };
 
@@ -54,31 +80,42 @@ export async function GET(req: NextRequest) {
     const data = await r.json();
     const ads: any[] = data.realEstateAds || [];
 
-    const annonces = ads.map((a: any) => {
-      const pos = a.blurInfo?.position || {};
-      const lat = pos.lat || null;
-      const lng = pos.lon || null;
-      const posType = a.blurInfo?.type || "unknown"; // cityOrArrondissement | disk
+    const annonces = ads
+      .map((a: any) => {
+        const prix = toNumber(a.price);
+        const surface = toNumber(a.surfaceArea);
+        if (!prix || prix < 150000) return null; // skip viager and tiny lots
 
-      return {
-        id: `bienici-${a.id || Math.random()}`,
-        titre: a.title || `${a.propertyType === "house" ? "Maison" : "Appartement"} ${a.surfaceArea || "?"}m²`,
-        prix: a.price || null,
-        surface: a.surfaceArea || null,
-        pieces: a.roomsQuantity || null,
-        type: a.propertyType === "house" ? "Maison" : "Appartement",
-        ville: a.city || zone.nomVille,
-        cp: a.postalCode || "",
-        agence: a.agencyName || a.accountType || "Particulier",
-        photos: a.photos?.slice(0, 3).map((p: any) => p.url || p.thumb_url) || [],
-        lat,
-        lng,
-        posType,
-        url: a.id ? `https://www.bienici.com/annonce/${a.id}` : null,
-        source: "Bien'ici",
-        publishedAt: a.publicationDate || null,
-      };
-    });
+        const pos = a.blurInfo?.position || {};
+        const lat: number | null = pos.lat ?? null;
+        const lng: number | null = pos.lon ?? null;
+
+        const type = a.propertyType === "house" ? "Maison" : "Appartement";
+        const titre = a.title && a.title !== type.toUpperCase()
+          ? a.title.charAt(0).toUpperCase() + a.title.slice(1).toLowerCase()
+          : `${type} ${surface ? surface + "m²" : ""}`.trim();
+
+        return {
+          id: `bienici-${a.id || Math.random()}`,
+          titre,
+          prix,
+          surface,
+          pieces: toNumber(a.roomsQuantity),
+          type,
+          ville: a.city || zone.nomVille,
+          cp: a.postalCode || "",
+          agence: formatAgence(a),
+          photos: (a.photos || []).slice(0, 3).map((p: any) => bestPhotoUrl([p])).filter(Boolean),
+          lat,
+          lng,
+          posType: a.blurInfo?.type || "unknown",
+          url: a.id ? `https://www.bienici.com/annonce/${a.id}` : null,
+          source: "Bien'ici",
+          publishedAt: a.publicationDate || null,
+          isNew: !!a.newProperty,
+        };
+      })
+      .filter(Boolean);
 
     return NextResponse.json({
       annonces,
@@ -86,7 +123,6 @@ export async function GET(req: NextRequest) {
       ville: zone.nomVille,
       lat: String(zone.lat),
       lng: String(zone.lng),
-      bienici_url: `https://www.bienici.com/recherche/${filterType === "buy" ? "achat" : "location"}/${ville.toLowerCase().replace(/\s+/g, "-")}-${zone.nomVille ? "" : ""}`,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
