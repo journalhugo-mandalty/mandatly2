@@ -241,8 +241,8 @@ export default function App() {
       max_tokens:700
     })})
     .then(r=>r.json())
-    .then(d=>{ setAutoCourrierContent(d.content?.[0]?.text||d.error||"Erreur de génération"); setAutoCourrierLoading(false); })
-    .catch(()=>{ setAutoCourrierContent("Erreur de connexion — vérifiez ANTHROPIC_API_KEY dans Vercel."); setAutoCourrierLoading(false); });
+    .then(d=>{ setAutoCourrierContent(d.content?.[0]?.text||(d.error?`Erreur : ${d.error}`:"Erreur de génération")); setAutoCourrierLoading(false); })
+    .catch((e)=>{ setAutoCourrierContent(`Erreur de connexion : ${e?.message||"réseau"} — vérifiez ANTHROPIC_API_KEY dans Vercel.`); setAutoCourrierLoading(false); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[selProspect?.id, autoCourrierTemplate]);
 
@@ -382,9 +382,10 @@ export default function App() {
         max_tokens:500
       })});
       const d = await res.json();
-      setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:d.content?.[0]?.text||"Désolé, je n'ai pas pu répondre."}]);
-    } catch {
-      setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:"Erreur de connexion."}]);
+      const reply = d.content?.[0]?.text || (d.error ? `Erreur API : ${d.error}` : "Désolé, je n'ai pas pu répondre.");
+      setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:reply}]);
+    } catch(e:any) {
+      setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Erreur de connexion : ${e.message||"réseau"}`}]);
     }
     setTyping(false);
   },[input,msgs,mandats,prospects,agent]);
