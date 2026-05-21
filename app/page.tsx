@@ -152,6 +152,8 @@ export default function App() {
   const [annonces, setAnnonces] = useState<any[]>([]);
   const [annoncesLoading, setAnnoncesLoading] = useState(false);
   const [annoncesError, setAnnoncesError] = useState("");
+  const [annoncesTypeFilter, setAnnoncesTypeFilter] = useState<""|"Maison"|"Appartement">("");
+  const [annoncesSort, setAnnoncesSort] = useState<"prix_asc"|"prix_desc"|"surface_desc">("prix_asc");
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
@@ -353,6 +355,18 @@ export default function App() {
     // Enrichissement Sirene + Cadastre pour le top 30
     enrichirProspects(allProspects);
   }, [enrichirProspects]);
+
+  const handleAnnonces = useCallback(async (ville: string) => {
+    if (!ville.trim() || annoncesLoading) return;
+    setAnnoncesLoading(true); setAnnoncesError(""); setAnnonces([]);
+    try {
+      const r = await fetch(`/api/annonces?ville=${encodeURIComponent(ville)}&size=60`);
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      setAnnonces(d.annonces || []);
+    } catch (err: any) { setAnnoncesError(err.message || "Erreur"); }
+    setAnnoncesLoading(false);
+  }, [annoncesLoading]);
 
   const sendMsg = useCallback(async()=>{
     if(!input.trim()) return;
@@ -1711,46 +1725,52 @@ export default function App() {
                   <div style={{fontSize:13,color:C.muted}}>Annonces en vente sur votre secteur · Source : Bien'ici</div>
                 </div>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <input value={annonceVille} onChange={e=>setAnnonceVille(e.target.value)} onKeyDown={async e=>{
-                    if(e.key!=="Enter"||!annonceVille.trim()||annoncesLoading) return;
-                    setAnnoncesLoading(true); setAnnoncesError(""); setAnnonces([]);
-                    try{
-                      const r = await fetch(`/api/annonces?ville=${encodeURIComponent(annonceVille)}&size=60`);
-                      const d = await r.json();
-                      if(d.error) throw new Error(d.error);
-                      setAnnonces(d.annonces||[]);
-                    }catch(err:any){setAnnoncesError(err.message||"Erreur");}
-                    setAnnoncesLoading(false);
-                  }} placeholder="Ex : Bordeaux, Mérignac..." style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 14px",fontSize:13,width:220}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  <button disabled={annoncesLoading||!annonceVille.trim()} onClick={async()=>{
-                    if(!annonceVille.trim()||annoncesLoading) return;
-                    setAnnoncesLoading(true); setAnnoncesError(""); setAnnonces([]);
-                    try{
-                      const r = await fetch(`/api/annonces?ville=${encodeURIComponent(annonceVille)}&size=60`);
-                      const d = await r.json();
-                      if(d.error) throw new Error(d.error);
-                      setAnnonces(d.annonces||[]);
-                    }catch(err:any){setAnnoncesError(err.message||"Erreur");}
-                    setAnnoncesLoading(false);
-                  }} style={{background:annoncesLoading?C.border:C.accent,color:annoncesLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:annoncesLoading?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
+                  <input value={annonceVille} onChange={e=>setAnnonceVille(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter") handleAnnonces(annonceVille);}}
+                    placeholder="Ex : Bordeaux, Mérignac..." style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 14px",fontSize:13,width:220}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <button disabled={annoncesLoading||!annonceVille.trim()} onClick={()=>handleAnnonces(annonceVille)}
+                    style={{background:annoncesLoading?C.border:C.accent,color:annoncesLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:annoncesLoading?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
                     {annoncesLoading?"...":"Analyser"}
                   </button>
                 </div>
               </div>
               {annoncesError&&<div style={{fontSize:12,color:C.red,marginTop:8}}>{annoncesError}</div>}
-              {annonces.length>0&&(
-                <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap"}}>
-                  <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px"}}>
-                    <span style={{fontWeight:600,color:C.text}}>{annonces.length}</span> annonces trouvées
+              {annonces.length>0&&(()=>{
+                const maisons = annonces.filter(a=>a.type==="Maison");
+                const apparts = annonces.filter(a=>a.type==="Appartement");
+                const withPrixM2 = annonces.filter(a=>a.prix&&a.surface&&a.surface>0);
+                const avgPrixM2 = withPrixM2.length ? Math.round(withPrixM2.reduce((s,a)=>s+a.prix/a.surface,0)/withPrixM2.length) : 0;
+                const avgPrix = Math.round(annonces.reduce((s,a)=>s+(a.prix||0),0)/annonces.length);
+                return (
+                  <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap",alignItems:"center"}}>
+                    {[
+                      {l:`${annonces.length} annonces`},
+                      {l:`${maisons.length} maisons`,c:C.green},
+                      {l:`${apparts.length} apparts`,c:C.blue},
+                      ...(avgPrixM2>0?[{l:`~${avgPrixM2.toLocaleString("fr-FR")} €/m²`,c:C.amber}]:[]),
+                      ...(avgPrix>0?[{l:`moy. ${avgPrix.toLocaleString("fr-FR")} €`}]:[]),
+                    ].map(s=>(
+                      <div key={s.l} style={{fontSize:11,color:(s as any).c||C.muted,background:C.card,border:`1px solid ${(s as any).c?((s as any).c+"30"):C.border}`,borderRadius:6,padding:"3px 10px",fontWeight:(s as any).c?600:400}}>
+                        {s.l}
+                      </div>
+                    ))}
+                    {/* Filters */}
+                    <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
+                      {(["","Maison","Appartement"] as const).map(f=>(
+                        <button key={f} onClick={()=>setAnnoncesTypeFilter(f)} style={{padding:"3px 9px",background:annoncesTypeFilter===f?C.accent:C.card,color:annoncesTypeFilter===f?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${annoncesTypeFilter===f?C.accent:C.border}`,borderRadius:20,fontSize:11,fontWeight:annoncesTypeFilter===f?600:400,cursor:"pointer"}}>
+                          {f||"Tous"}
+                        </button>
+                      ))}
+                      <select value={annoncesSort} onChange={e=>setAnnoncesSort(e.target.value as typeof annoncesSort)}
+                        style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>
+                        <option value="prix_asc">Prix ↑</option>
+                        <option value="prix_desc">Prix ↓</option>
+                        <option value="surface_desc">Surface ↓</option>
+                      </select>
+                    </div>
                   </div>
-                  <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px"}}>
-                    <span style={{fontWeight:600,color:C.text}}>{annonces.filter(a=>a.type==="Maison").length}</span> maisons
-                  </div>
-                  <div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px"}}>
-                    <span style={{fontWeight:600,color:C.text}}>{annonces.filter(a=>a.type==="Appartement").length}</span> appartements
-                  </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Content */}
@@ -1785,17 +1805,26 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-              ):(
+              ):(()=>{
+                const filtered = annonces
+                  .filter(a=>!annoncesTypeFilter||a.type===annoncesTypeFilter)
+                  .sort((a,b)=>annoncesSort==="prix_desc"?(b.prix||0)-(a.prix||0):annoncesSort==="surface_desc"?(b.surface||0)-(a.surface||0):(a.prix||0)-(b.prix||0));
+                return (
                 <>
                   {/* Grid */}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:24}}>
-                    {annonces.map(a=>(
-                      <div key={a.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s"}}>
+                    {filtered.map(a=>{
+                      const prixM2 = a.prix && a.surface && a.surface > 0 ? Math.round(a.prix / a.surface) : null;
+                      return (
+                      <div key={a.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s"}} onMouseOver={e=>e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`} onMouseOut={e=>e.currentTarget.style.boxShadow="none"}>
                         {/* Photo or placeholder */}
                         {a.photos?.[0]?(
-                          <div style={{height:160,background:`url(${a.photos[0]}) center/cover no-repeat`,flexShrink:0}}/>
+                          <div style={{height:160,background:`url(${a.photos[0]}) center/cover no-repeat`,flexShrink:0,position:"relative"}}>
+                            {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
+                          </div>
                         ):(
-                          <div style={{height:160,background:C.surface,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          <div style={{height:160,background:C.surface,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+                            {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
                             <span style={{fontSize:11,color:C.muted}}>Pas de photo</span>
                           </div>
                         )}
@@ -1806,7 +1835,7 @@ export default function App() {
                                 {a.prix ? `${a.prix.toLocaleString("fr-FR")} €` : "Prix non communiqué"}
                               </div>
                               <div style={{fontSize:12,color:C.muted,marginTop:2}}>
-                                {a.surface ? `${a.surface} m²` : "?"}{a.pieces ? ` · ${a.pieces} p.` : ""}
+                                {a.surface ? `${a.surface} m²` : "?"}{a.pieces ? ` · ${a.pieces} p.` : ""}{prixM2 ? <span style={{color:C.amber,fontWeight:600}}> · {prixM2.toLocaleString("fr-FR")} €/m²</span> : ""}
                               </div>
                             </div>
                             <span style={{fontSize:10,background:a.type==="Maison"?C.green+"18":C.blue+"15",color:a.type==="Maison"?C.green:C.blue,border:`1px solid ${a.type==="Maison"?C.green+"35":C.blue+"30"}`,borderRadius:5,padding:"2px 7px",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
@@ -1828,7 +1857,8 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   {/* Portal links bar */}
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
@@ -1848,7 +1878,8 @@ export default function App() {
                     </div>
                   </div>
                 </>
-              )}
+                );
+              })()}
             </div>
           </div>
         )}
