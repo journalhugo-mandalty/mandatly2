@@ -1,14 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Enrichment chain priority:
-// 1. Sirene — SCI/company registered at this address → dirigeant
-// 2. Vision IA — Street View + Claude reads letterbox (if GOOGLE_STREETVIEW_KEY set)
-// 3. Cadastre IGN — parcel data (always, for context)
-
 function cleanName(nom: string, prenoms: string): string {
   const n = (nom || "").replace(/\s*\([^)]+\)/g, "").trim();
   const p = (prenoms || "").split(" ")[0] || "";
   return [n, p].filter(Boolean).join(" ");
+}
+
+// Inline vision logic — avoids HTTP call between serverless functions
+async function tryVision(lat: string, lng: string): Promise<string | null> {
+  const googleKey = process.env.GOOGLE_STREETVIEW_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!googleKey || !anthropicKey) return null;
+
+  try {
+    const meta = await fetch(
+      `https://maps.googleapis.com/maps/api/streetview/metadata?location=${lat},${lng}&key=${googleKey}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!meta.ok) return null;
+    const md = await meta.json();
+    if (md.status !== "OK") return null;
+
+    const imgRes = await fetch(
+      `https://maps.googleapis.com/maps/api/streetview?size=640x480&location=${lat},${lng}&key=${googleKey}&fov=90&pitch=0`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!imgRes.ok) return null;
+    const ct = imgRes.headers.get("content-type") || "image/jpeg";
+    if (!ct.includes("image")) return null;
+
+    const base64 = Buffer.from(await imgRes.arrayBuffer()).toString("base64");
+    const mediaType = ct.includes("png") ? "image/png" : "image/jpeg";
+
+    const cr = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 80,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+            { type: "text", text: "Vue de rue en France. Nom visible sur boîte aux lettres, interphone, portail ou plaque ? Si oui réponds UNIQUEMENT avec le nom (ex: DUPONT, Famille MARTIN, SCI LES ACACIAS). Sinon: AUCUN." }
+          ]
+        }]
+      }),
+    });
+    if (!cr.ok) return null;
+    const cd = await cr.json();
+    const text = (cd.content?.[0]?.text || "").trim();
+    if (!text || text === "AUCUN" || text.length < 2 || text.length > 80) return null;
+    return text;
+  } catch { return null; }
 }
 
 export async function GET(req: NextRequest) {
@@ -19,7 +63,7 @@ export async function GET(req: NextRequest) {
 
   if (!lat || !lng) return NextResponse.json({ error: "lat/lng requis" }, { status: 400 });
 
-  // Run Cadastre + Sirene in parallel
+  // Sirene + Cadastre in parallel
   const [cadastreRes, sireneRes] = await Promise.allSettled([
     fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${lng}&lat=${lat}&_limit=3`, {
       signal: AbortSignal.timeout(6000),
@@ -29,7 +73,6 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  // Parse cadastre
   let parcelles: any[] = [];
   if (cadastreRes.status === "fulfilled" && cadastreRes.value.ok) {
     const d = await cadastreRes.value.json();
@@ -38,11 +81,9 @@ export async function GET(req: NextRequest) {
       numero: f.properties?.numero,
       contenance: f.properties?.contenance,
       code_insee: f.properties?.code_insee,
-      prefixe: f.properties?.prefixe,
     }));
   }
 
-  // Parse Sirene
   let entreprises: any[] = [];
   let proprietaire_nom = "";
   let proprietaire_source = "inconnu";
@@ -62,10 +103,10 @@ export async function GET(req: NextRequest) {
       })),
     }));
 
-    // Priority order: SCI > SARL/SAS (likely property holders) > first result
+    // Priority: SCI/SARL/foncière > first result
     const sci = results.find(e => {
       const n = (e.nom_complet || e.nom_raison_sociale || "").toUpperCase();
-      return n.includes("SCI") || n.includes("SARL") || n.includes("SAS") || n.includes("SASU") || n.includes("FONCIERE");
+      return n.includes("SCI") || n.includes("SARL") || n.includes("SAS") || n.includes("SASU") || n.includes("FONCIERE") || n.includes("IMMOB");
     });
 
     const target = sci || results[0];
@@ -81,23 +122,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Fallback: Street View + Claude Vision (if key is set and no name found yet)
-  let visionNom = "";
+  // Fallback: Street View + Claude Vision (inline, no HTTP hop)
   const googleKey = process.env.GOOGLE_STREETVIEW_KEY;
   if (!proprietaire_nom && googleKey) {
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-      const visionRes = await fetch(`${baseUrl}/api/vision?lat=${lat}&lng=${lng}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (visionRes.ok) {
-        const vd = await visionRes.json();
-        if (vd.nom) { visionNom = vd.nom; proprietaire_source = "vision-ia"; }
-      }
-    } catch {}
+    const visionName = await tryVision(lat, lng);
+    if (visionName) {
+      proprietaire_nom = visionName;
+      proprietaire_source = "vision-ia";
+    }
   }
 
-  if (!proprietaire_nom && visionNom) proprietaire_nom = visionNom;
   if (!proprietaire_nom && parcelles.length > 0) proprietaire_source = "cadastre";
 
   const deepLink = parcelles[0]

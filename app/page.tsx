@@ -235,14 +235,27 @@ export default function App() {
       relance: `Rédige un courrier de relance pour un propriétaire au ${p.adresse}, ${p.ville} que j'ai déjà contacté il y a 3 semaines sans réponse. ${p.notes}.${nomCtx} Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Bref et percutant, 2 paragraphes. Commence par "Madame, Monsieur,".`,
       offre: `Rédige un courrier informant le propriétaire au ${p.adresse}, ${p.ville} qu'un acheteur sérieux recherche exactement son type de bien dans ce secteur. ${p.notes}.${nomCtx} Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Commence par "Madame, Monsieur,".`,
     };
+    const dest = p.proprietaire_nom ? p.proprietaire_nom : "Madame, Monsieur";
+    const salutation = p.proprietaire_nom ? `${p.proprietaire_nom},` : "Madame, Monsieur,";
+    const fallback: Record<string,string> = {
+      prospection: `${salutation}\n\nNous sommes ${agent.agence}, agence immobilière spécialisée dans les transactions de votre secteur.\n\nVotre propriété au ${p.adresse}, ${p.ville} retient toute notre attention. Nous représentons des acquéreurs sérieux et solvables à la recherche d'un bien de ce type dans ce quartier précis.\n\nNous serions heureux de vous proposer une estimation gratuite et confidentielle. N'hésitez pas à nous contacter.\n\nCordialement,\n${agent.prenom} ${agent.nom}\n${agent.agence}`,
+      relance: `${salutation}\n\nSuite à notre précédent courrier resté sans réponse, je me permets de vous relancer concernant votre propriété au ${p.adresse}.\n\nNotre acheteur est toujours à la recherche d'un bien dans ce secteur et notre offre reste d'actualité.\n\nCordialement,\n${agent.prenom} ${agent.nom}\n${agent.agence}`,
+      offre: `${salutation}\n\nNous avons le plaisir de vous informer qu'un acquéreur qualifié recherche activement un bien correspondant à votre propriété au ${p.adresse}, ${p.ville}.\n\nDans ce contexte de marché favorable, une vente rapide et au meilleur prix est tout à fait envisageable.\n\nCordialement,\n${agent.prenom} ${agent.nom}\n${agent.agence}`,
+    };
+    void dest; // used in salutation
     fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       system:`Tu es Lucas, assistant IA de ${agent.prenom} ${agent.nom} chez ${agent.agence}. Tu rédiges uniquement le texte du courrier, sans introduction ni explication supplémentaire.`,
       messages:[{role:"user",content:templatePrompts[autoCourrierTemplate]||templatePrompts.prospection}],
       max_tokens:700
     })})
     .then(r=>r.json())
-    .then(d=>{ setAutoCourrierContent(d.content?.[0]?.text||(d.error?`Erreur : ${d.error}`:"Erreur de génération")); setAutoCourrierLoading(false); })
-    .catch((e)=>{ setAutoCourrierContent(`Erreur de connexion : ${e?.message||"réseau"} — vérifiez ANTHROPIC_API_KEY dans Vercel.`); setAutoCourrierLoading(false); });
+    .then(d=>{
+      const txt = d.content?.[0]?.text;
+      if(txt) { setAutoCourrierContent(txt); }
+      else { setAutoCourrierContent(fallback[autoCourrierTemplate]||fallback.prospection); }
+      setAutoCourrierLoading(false);
+    })
+    .catch(()=>{ setAutoCourrierContent(fallback[autoCourrierTemplate]||fallback.prospection); setAutoCourrierLoading(false); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[selProspect?.id, autoCourrierTemplate]);
 
@@ -286,7 +299,10 @@ export default function App() {
       const batch = withCoords.slice(i, i + 5);
       await Promise.allSettled(batch.map(async (p) => {
         try {
-          const r = await fetch(`/api/proprietaire?lat=${p.lat}&lng=${p.lng}&adresse=${encodeURIComponent(p.adresse + " " + p.ville)}`);
+          // Strip postal code from DPE addresses like "119 Rue Lagrange 33000 Bordeaux"
+          const cleanAddr = p.adresse.replace(/\b\d{5}\b\s*/g, "").trim();
+          const adrsQuery = cleanAddr.toLowerCase().includes(p.ville.toLowerCase()) ? cleanAddr : `${cleanAddr} ${p.ville}`;
+          const r = await fetch(`/api/proprietaire?lat=${p.lat}&lng=${p.lng}&adresse=${encodeURIComponent(adrsQuery)}`);
           if (!r.ok) return;
           const d = await r.json();
           setProspects(prev => prev.map(x => x.id === p.id ? {
@@ -903,7 +919,9 @@ export default function App() {
                 <MapComponent
                   prospects={prospects.filter(p=>!prospMethod||p.source===prospMethod).filter((p:any)=>p.lat&&p.lng) as any}
                   onSelect={(p:any)=>{
-                    setSelProspect(p as any);
+                    // Always use the fully-enriched version from state (proprietaire_nom etc.)
+                    const full = prospects.find(x => String(x.id) === String(p.id)) || p;
+                    setSelProspect(full as any);
                     const el = document.getElementById("prospect-"+p.id);
                     if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
                   }}
