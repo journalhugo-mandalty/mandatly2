@@ -783,91 +783,98 @@ export default function App() {
                   <div style={{padding:24,textAlign:"center",color:C.muted}}>
                     <div style={{fontFamily:DISPLAY,fontSize:20,fontWeight:400,fontStyle:"italic",marginBottom:8,color:C.text}}>Aucun prospect</div>
                     <div style={{fontSize:12}}>Entrez un code postal ou une commune et cliquez Analyser</div>
-                    <div style={{fontSize:11,marginTop:8,color:C.muted}}>Sources : DVF Etalab (transactions) + DPE ADEME (diagnostics F/G)</div>
+                    <div style={{fontSize:11,marginTop:8,color:C.muted}}>Sources : DVF Etalab · DPE ADEME · Sirene · Cadastre IGN</div>
                   </div>
                 ):(
                   prospects.filter(p=>!prospMethod||p.source===prospMethod).map(p=>{
                     const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
                     const isSel = selProspects.has(p.id);
+                    const isActive = selProspect?.id===p.id;
+                    const srcColor = p.source==="DPE"?C.amber:p.proprietaire_source==="vision-ia"?C.purple:C.blue;
+                    const srcLabel = p.source==="DPE"?`DPE${(p as any).classe_dpe?" "+(p as any).classe_dpe:""}`:p.proprietaire_source==="vision-ia"?"Vision IA":"DVF";
                     return(
-                      <div key={p.id} id={"prospect-"+p.id} onClick={()=>setSelProspect(selProspect?.id===p.id?null:p)} style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:selProspect?.id===p.id?C.accentBg:isSel?C.accentBg+"80":"transparent",transition:"background 0.15s"}}>
-                        <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:3}}>
+                      <div key={p.id} id={"prospect-"+p.id} onClick={()=>setSelProspect(isActive?null:p)} style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:isActive?C.accentBg:isSel?C.accentBg+"70":"transparent",transition:"background 0.15s"}}>
+                        {/* ROW HEADER */}
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
                           {/* Checkbox */}
-                          <div onClick={e=>{e.stopPropagation();setSelProspects(s=>{const n=new Set(s);isSel?n.delete(p.id):n.add(p.id);return n;})}} style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${isSel?C.gold:C.border}`,background:isSel?C.gold:"transparent",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all 0.15s"}}>
-                            {isSel&&<div style={{width:8,height:8,borderRadius:2,background:"#fff"}}/>}
+                          <div onClick={e=>{e.stopPropagation();setSelProspects(s=>{const n=new Set(s);isSel?n.delete(p.id):n.add(p.id);return n;})}} style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${isSel?C.gold:C.border}`,background:isSel?C.gold:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all 0.15s"}}>
+                            {isSel&&<div style={{width:6,height:6,borderRadius:1,background:"#fff"}}/>}
                           </div>
-                          {/* Score badge */}
-                          <div style={{width:30,height:30,borderRadius:6,background:col+"18",border:`1px solid ${col}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                          {/* Score */}
+                          <div style={{width:28,height:28,borderRadius:6,background:col+"15",border:`1px solid ${col}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                          {/* Address + meta */}
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
-                            <div style={{display:"flex",alignItems:"center",gap:5,marginTop:2}}>
-                              <span style={{fontSize:10,color:C.muted}}>{p.ville}</span>
-                              <span style={{fontSize:10,background:p.source==="DPE"?C.amber+"20":C.blue+"15",color:p.source==="DPE"?C.amber:C.blue,border:`1px solid ${p.source==="DPE"?C.amber+"40":C.blue+"30"}`,borderRadius:4,padding:"0px 5px",fontWeight:600}}>{p.source}{(p as any).classe_dpe?" "+((p as any).classe_dpe):""}</span>
+                            <div style={{display:"flex",alignItems:"center",gap:4,marginTop:1,flexWrap:"wrap"}}>
+                              {/* Owner name — most important info */}
+                              {p.proprietaire_chargement?(
+                                <span style={{fontSize:10,color:C.muted,fontStyle:"italic",animation:"pulse 1.5s infinite"}}>recherche...</span>
+                              ):p.proprietaire_nom?(
+                                <span style={{fontSize:11,fontWeight:700,color:C.gold}}>{p.proprietaire_nom}</span>
+                              ):(
+                                <span style={{fontSize:10,color:C.muted}}>{p.ville}</span>
+                              )}
+                              {/* Source badge */}
+                              <span style={{fontSize:9,background:srcColor+"18",color:srcColor,border:`1px solid ${srcColor}35`,borderRadius:3,padding:"0 4px",fontWeight:600,lineHeight:"16px",flexShrink:0}}>{srcLabel}</span>
+                              {/* Owner source badge */}
+                              {p.proprietaire_nom&&p.proprietaire_source&&p.proprietaire_source!=="inconnu"&&(
+                                <span style={{fontSize:9,background:p.proprietaire_source==="vision-ia"?C.purple+"18":C.green+"10",color:p.proprietaire_source==="vision-ia"?C.purple:C.muted,border:`1px solid ${p.proprietaire_source==="vision-ia"?C.purple+"30":C.border}`,borderRadius:3,padding:"0 4px",fontWeight:600,lineHeight:"16px"}}>
+                                  {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="sirene+dirigeant"?"Sirene":p.proprietaire_source==="vision-ia"?"Vision IA":p.proprietaire_source==="cadastre"?"Cadastre":"Sirene"}
+                                </span>
+                              )}
                             </div>
                           </div>
+                          {/* Courrier button — always visible */}
+                          <button onClick={e=>{e.stopPropagation();setSelProspect(p);}} title="Générer un courrier" style={{flexShrink:0,background:isActive?C.accent:C.card,color:isActive?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${isActive?C.accent:C.border}`,borderRadius:6,padding:"4px 9px",fontSize:11,fontWeight:600,cursor:"pointer",transition:"all 0.15s",whiteSpace:"nowrap"}}>
+                            Courrier →
+                          </button>
                         </div>
-                        <div style={{fontSize:11,color:C.muted,marginLeft:54,marginBottom:4}}>{p.notes}</div>
                         {/* Score bar */}
-                        <div style={{marginLeft:54,height:3,background:C.border,borderRadius:2,marginBottom:4}}>
-                          <div style={{width:`${p.score}%`,height:"100%",background:col,borderRadius:2,transition:"width 0.5s"}}/>
+                        <div style={{height:2,background:C.border,borderRadius:1,marginTop:7,marginLeft:22}}>
+                          <div style={{width:`${p.score}%`,height:"100%",background:col,borderRadius:1,transition:"width 0.6s"}}/>
                         </div>
-                        {/* Proprietaire */}
-                        <div style={{marginLeft:54,display:"flex",alignItems:"center",gap:6}}>
-                          {p.proprietaire_chargement?(
-                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Identification propriétaire...</span>
-                          ):p.proprietaire_nom?(
-                            <>
-                              <span style={{fontSize:11,fontWeight:600,color:C.text}}>{p.proprietaire_nom}</span>
-                              <span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"0px 5px"}}>
-                                {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="sirene+dirigeant"?"Sirene":p.proprietaire_source==="cadastre"?"Cadastre":"Source"}
-                              </span>
-                            </>
-                          ):p.proprietaire_source&&p.proprietaire_source!=="inconnu"?(
-                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Particulier</span>
-                          ):null}
-                        </div>
-                        {/* Expanded actions */}
-                        {selProspect?.id===p.id&&(
-                          <>
-                            {propData[String(p.id)]&&(
-                              <div style={{marginTop:8,marginLeft:54,padding:"8px 10px",background:C.card,borderRadius:7,border:`1px solid ${C.border}`}}>
-                                {propData[String(p.id)].parcelles?.length>0&&(
-                                  <div style={{marginBottom:4}}>
-                                    <span style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Cadastre — </span>
-                                    <span style={{fontSize:11,color:C.text}}>Section {propData[String(p.id)].parcelles[0].section} n°{propData[String(p.id)].parcelles[0].numero} · {propData[String(p.id)].parcelles[0].contenance}m²</span>
-                                    {propData[String(p.id)].deepLink&&<a href={propData[String(p.id)].deepLink} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,marginLeft:6}}>carte →</a>}
-                                  </div>
-                                )}
-                                {propData[String(p.id)].entreprises?.length>0&&(
-                                  <div>
-                                    <span style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Sirene — </span>
-                                    <span style={{fontSize:11,color:C.text}}>{propData[String(p.id)].entreprises[0].nom}</span>
-                                  </div>
-                                )}
+                        {/* Notes (compact) */}
+                        <div style={{fontSize:10,color:C.muted,marginTop:4,marginLeft:22,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.notes}</div>
+                        {/* Expanded cadastre/Sirene detail */}
+                        {isActive&&propData[String(p.id)]&&(
+                          <div style={{marginTop:8,marginLeft:22,padding:"7px 10px",background:C.card,borderRadius:6,border:`1px solid ${C.border}`}}>
+                            {propData[String(p.id)].parcelles?.length>0&&(
+                              <div style={{marginBottom:3,fontSize:11,color:C.text}}>
+                                <span style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginRight:4}}>Cadastre</span>
+                                Section {propData[String(p.id)].parcelles[0].section} n°{propData[String(p.id)].parcelles[0].numero} · {propData[String(p.id)].parcelles[0].contenance}m²
+                                {propData[String(p.id)].deepLink&&<a href={propData[String(p.id)].deepLink} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,marginLeft:6}}>→</a>}
                               </div>
                             )}
-                            <div style={{marginTop:8,marginLeft:54,display:"flex",gap:5,flexWrap:"wrap"}}>
-                              <button onClick={e=>{e.stopPropagation();setCourrier({prospect:p,template:"prospection",content:"",loading:false});setNav("courriers");}} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>Courrier</button>
-                              <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse le prospect au ${p.adresse} (score ${p.score}/100, ${p.notes}). Recommande une stratégie.`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>Lucas</button>
-                              {(p as any).lat&&(p as any).lng&&(
-                                <button onClick={e=>{e.stopPropagation();setSvModal({lat:(p as any).lat,lng:(p as any).lng,adresse:p.adresse});}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>Street View</button>
-                              )}
-                              {(p as any).lat&&(p as any).lng&&!propData[String(p.id)]&&(
-                                <button onClick={async e=>{
-                                  e.stopPropagation();
-                                  const key=String(p.id); setPropLoading(key);
-                                  try{
-                                    const r=await fetch(`/api/proprietaire?lat=${(p as any).lat}&lng=${(p as any).lng}&adresse=${encodeURIComponent(p.adresse+" "+p.ville)}`);
-                                    const d=await r.json();
-                                    setPropData(x=>({...x,[key]:d}));
-                                  }catch{}
-                                  setPropLoading(null);
-                                }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>
-                                  {propLoading===String(p.id)?"...":"Cadastre"}
-                                </button>
-                              )}
-                            </div>
-                          </>
+                            {propData[String(p.id)].entreprises?.length>0&&(
+                              <div style={{fontSize:11,color:C.text}}>
+                                <span style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginRight:4}}>Sirene</span>
+                                {propData[String(p.id)].entreprises[0].nom}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {/* Extra actions row when expanded */}
+                        {isActive&&(
+                          <div style={{marginTop:7,marginLeft:22,display:"flex",gap:5}}>
+                            {(p as any).lat&&(p as any).lng&&(
+                              <button onClick={e=>{e.stopPropagation();setSvModal({lat:(p as any).lat,lng:(p as any).lng,adresse:p.adresse});}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 9px",fontSize:10,color:C.text,cursor:"pointer"}}>Street View</button>
+                            )}
+                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse le prospect au ${p.adresse}${p.proprietaire_nom?" — propriétaire : "+p.proprietaire_nom:""}. Score ${p.score}/100. ${p.notes}. Recommande une stratégie.`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 9px",fontSize:10,color:C.text,cursor:"pointer"}}>Lucas</button>
+                            {(p as any).lat&&(p as any).lng&&!propData[String(p.id)]&&(
+                              <button onClick={async e=>{
+                                e.stopPropagation();
+                                const key=String(p.id); setPropLoading(key);
+                                try{
+                                  const r=await fetch(`/api/proprietaire?lat=${(p as any).lat}&lng=${(p as any).lng}&adresse=${encodeURIComponent(p.adresse+" "+p.ville)}`);
+                                  const d=await r.json();
+                                  setPropData(x=>({...x,[key]:d}));
+                                }catch{}
+                                setPropLoading(null);
+                              }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 9px",fontSize:10,color:C.text,cursor:"pointer"}}>
+                                {propLoading===String(p.id)?"...":"Cadastre"}
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
