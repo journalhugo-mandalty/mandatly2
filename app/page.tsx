@@ -990,11 +990,25 @@ export default function App() {
                           <>
                             <span style={{fontSize:12,fontWeight:700,color:C.text}}>{selProspect.proprietaire_nom}</span>
                             <span style={{fontSize:10,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>
-                              {selProspect.proprietaire_source==="sci+dirigeant"?"SCI":selProspect.proprietaire_source==="sirene+dirigeant"?"Sirene":"Sirene"}
+                              {selProspect.proprietaire_source==="sci+dirigeant"?"SCI":selProspect.proprietaire_source==="vision-ia"?"Vision IA":selProspect.proprietaire_source==="bodacc"?"BODACC":"Sirene"}
                             </span>
                           </>
                         ):(
-                          <span style={{fontSize:11,color:C.muted}}>Propriétaire non identifié</span>
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            <span style={{fontSize:11,color:C.muted}}>Propriétaire non identifié</span>
+                            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                              {(propData[String(selProspect.id)]?.pagesBlanchesUrl||propData[String(selProspect.id)]?.annuaireUrl)&&(
+                                <>
+                                  {propData[String(selProspect.id)]?.pagesBlanchesUrl&&(
+                                    <a href={propData[String(selProspect.id)].pagesBlanchesUrl} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,textDecoration:"none",background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Pages Blanches →</a>
+                                  )}
+                                  {propData[String(selProspect.id)]?.annuaireUrl&&(
+                                    <a href={propData[String(selProspect.id)].annuaireUrl} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,textDecoration:"none",background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>118712 →</a>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>

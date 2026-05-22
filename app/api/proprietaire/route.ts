@@ -6,6 +6,61 @@ function cleanName(nom: string, prenoms: string): string {
   return [n, p].filter(Boolean).join(" ");
 }
 
+function cleanBodacc(raw: string): string {
+  // BODACC format: "NOM, Prenom, AutrePrenom" or "SOCIETE, NOM Prenom"
+  if (!raw) return "";
+  const parts = raw.split(",");
+  if (parts.length >= 2) {
+    const nom = parts[0].trim();
+    const prenom = parts[1].trim().split(" ")[0] || "";
+    return `${nom} ${prenom}`.trim();
+  }
+  return raw.trim();
+}
+
+function extractStreetNum(adresse: string): { num: string; street: string } {
+  const m = adresse.match(/^(\d+)\s*(?:BIS|TER|QUATER)?\s+(.+)/i);
+  if (m) return { num: m[1], street: m[2] };
+  return { num: "", street: adresse };
+}
+
+async function tryBodacc(adresse: string, cp: string): Promise<string | null> {
+  const { num, street } = extractStreetNum(adresse);
+  if (!num || !street) return null;
+
+  // Normalize street name for search (remove type prefix, keep distinctive part)
+  const streetNorm = street
+    .replace(/^(RUE|AVENUE|AVE|AV|COURS|CRS|ALLEE|ALL|BOULEVARD|BD|IMPASSE|IMP|PLACE|PL)\s+/i, "")
+    .slice(0, 30)
+    .toLowerCase();
+  if (streetNorm.length < 4) return null;
+
+  try {
+    const q = encodeURIComponent(streetNorm);
+    const url =
+      `https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/` +
+      `annonces-commerciales/records?where=cp%3D%22${cp}%22%20and%20listeetablissements%20` +
+      `like%20%22${q}%22&limit=20&select=commercant,listeetablissements,dateparution` +
+      `&order_by=dateparution%20desc`;
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const d = await res.json();
+
+    for (const r of d.results || []) {
+      let les = r.listeetablissements || "";
+      if (typeof les === "string") { try { les = JSON.parse(les); } catch { les = {}; } }
+      const etab = (les as any)?.etablissement || {};
+      const adr = etab?.adresse || {};
+      if (String(adr.numeroVoie || "") === num) {
+        const nom = cleanBodacc(r.commercant || "");
+        if (nom && nom.length > 1) return nom;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 // Inline vision logic — avoids HTTP call between serverless functions
 async function tryVision(lat: string, lng: string): Promise<string | null> {
   const googleKey = process.env.GOOGLE_STREETVIEW_KEY;
@@ -62,6 +117,10 @@ export async function GET(req: NextRequest) {
   const adresse = searchParams.get("adresse") || "";
 
   if (!lat || !lng) return NextResponse.json({ error: "lat/lng requis" }, { status: 400 });
+
+  // Extract postal code from address for BODACC
+  const cpMatch = adresse.match(/\b(3[0-9]{4})\b/);
+  const cp = cpMatch?.[1] || "33000";
 
   // Sirene + Cadastre in parallel
   const [cadastreRes, sireneRes] = await Promise.allSettled([
@@ -122,7 +181,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Fallback: Street View + Claude Vision (inline, no HTTP hop)
+  // Fallback 1: BODACC (commercial registrations at exact address)
+  if (!proprietaire_nom) {
+    const bodaccNom = await tryBodacc(adresse.toUpperCase(), cp);
+    if (bodaccNom) {
+      proprietaire_nom = bodaccNom;
+      proprietaire_source = "bodacc";
+    }
+  }
+
+  // Fallback 2: Street View + Claude Vision (inline, no HTTP hop)
   const googleKey = process.env.GOOGLE_STREETVIEW_KEY;
   if (!proprietaire_nom && googleKey) {
     const visionName = await tryVision(lat, lng);
@@ -134,6 +202,11 @@ export async function GET(req: NextRequest) {
 
   if (!proprietaire_nom && parcelles.length > 0) proprietaire_source = "cadastre";
 
+  // Deep links for manual lookup
+  const adresseEnc = encodeURIComponent(adresse);
+  const pagesBlanchesUrl = `https://www.pagesjaunes.fr/pagesblanches/recherche?quoiqui=&ou=${adresseEnc}`;
+  const annuaireUrl = `https://www.118712.fr/annuaire/personne?ou=${adresseEnc}`;
+
   const deepLink = parcelles[0]
     ? `https://www.cadastre.gouv.fr/cadastre/publicDisplay?f=1&codeDep=${parcelles[0].code_insee?.slice(0,2)}&codeDir=${parcelles[0].code_insee?.slice(0,2)}&codeCommune=${parcelles[0].code_insee}&section=${parcelles[0].section}&numero=${parcelles[0].numero}`
     : null;
@@ -142,5 +215,6 @@ export async function GET(req: NextRequest) {
     parcelles, entreprises, deepLink,
     proprietaire_nom, proprietaire_source,
     vision_enabled: !!googleKey,
+    pagesBlanchesUrl, annuaireUrl,
   });
 }
