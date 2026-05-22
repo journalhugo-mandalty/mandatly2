@@ -54,5 +54,40 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(log);
   }
 
+  if (!anthropicKey) return NextResponse.json(log);
+
+  // Step 3: Claude call with single image
+  try {
+    const base64 = Buffer.from(log.img_bytes > 0
+      ? await (await fetch(`https://maps.googleapis.com/maps/api/streetview?size=640x480&location=${lat},${lng}&key=${googleKey}&fov=90`, { signal: AbortSignal.timeout(8000) })).arrayBuffer()
+      : new ArrayBuffer(0)
+    ).toString("base64");
+
+    const t2 = Date.now();
+    const cr = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 80,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
+          { type: "text", text: "Vue de rue France. Nom sur boîte aux lettres/interphone/portail ? Réponds UNIQUEMENT le nom ou AUCUN." }
+        ]}]
+      }),
+    });
+    log.claude_http = cr.status;
+    log.claude_ok = cr.ok;
+    log.claude_ms = Date.now() - t2;
+    if (cr.ok) {
+      const cd = await cr.json();
+      log.claude_text = cd.content?.[0]?.text || "";
+    } else {
+      log.claude_error = await cr.text();
+    }
+  } catch (e: any) {
+    log.claude_exception = e.message;
+  }
+
   return NextResponse.json(log);
 }
