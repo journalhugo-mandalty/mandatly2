@@ -165,6 +165,11 @@ export default function App() {
   const [authMsg, setAuthMsg] = useState("");
   // Yousign signature
   const [sigState, setSigState] = useState<Record<number,SignatureState>>({});
+  // Stripe subscription
+  const [stripeModal, setStripeModal] = useState(false);
+  const [stripeLoading, setStripeLoading] = useState(false);
+  const [stripeMsg, setStripeMsg] = useState("");
+  const [subStatus, setSubStatus] = useState<"active"|"trialing"|"inactive"|"">("");
   const AGENT_DEFAULT = {prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"};
   const [agent, setAgent] = useState(()=>{
     if(typeof window==="undefined") return AGENT_DEFAULT;
@@ -181,6 +186,16 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("m_acheteurs",JSON.stringify(acheteurs));},[acheteurs]);
   useEffect(()=>{localStorage.setItem("m_rdvs",JSON.stringify(rdvs));},[rdvs]);
   useEffect(()=>{localStorage.setItem("m_courriers",JSON.stringify(courrierHisto));},[courrierHisto]);
+
+  // Stripe: handle return from checkout
+  useEffect(()=>{
+    const p = new URLSearchParams(window.location.search);
+    if(p.get("stripe")==="success") {
+      setSubStatus("active");
+      setStripeMsg("Abonnement activé — bienvenue dans Mandatly Pro !");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  },[]);
 
   // Supabase: init auth listener + load data on login
   useEffect(()=>{
@@ -526,6 +541,16 @@ export default function App() {
           ))}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {/* Stripe subscription badge/button */}
+          {subStatus==="active"||subStatus==="trialing"?(
+            <div style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",background:C.gold+"15",border:`1px solid ${C.gold}30`,borderRadius:8,cursor:"pointer"}} onClick={()=>setStripeModal(true)}>
+              <div style={{width:6,height:6,borderRadius:"50%",background:C.gold}}/>
+              <span style={{fontSize:11,color:C.gold,fontWeight:600}}>Pro{subStatus==="trialing"?" (essai)":""}</span>
+            </div>
+          ):(
+            <button onClick={()=>setStripeModal(true)} style={{padding:"5px 12px",background:C.gold+"18",border:`1px solid ${C.gold}40`,borderRadius:8,fontSize:11,color:C.gold,cursor:"pointer",fontWeight:600}}>Passer Pro</button>
+          )}
+          {stripeMsg&&<span style={{fontSize:11,color:C.green,fontWeight:500}}>{stripeMsg}</span>}
           {getSupabase()&&(
             user?(
               <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",background:C.green+"15",border:`1px solid ${C.green}25`,borderRadius:8}}>
@@ -2010,6 +2035,52 @@ export default function App() {
                 {emailModal.corps&&<button onClick={()=>{const m=`mailto:${emailModal.to}?subject=${encodeURIComponent(emailModal.sujet)}&body=${encodeURIComponent(emailModal.corps)}`;window.open(m);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",fontSize:13,color:C.text,cursor:"pointer"}}>Messagerie</button>}
                 {emailModal.corps&&<button onClick={()=>navigator.clipboard.writeText(emailModal!.corps)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",fontSize:13,color:C.text,cursor:"pointer"}}>Copier</button>}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* STRIPE MODAL */}
+        {stripeModal&&(
+          <div onClick={()=>{setStripeModal(false);setStripeMsg("");}} style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div onClick={e=>e.stopPropagation()} style={{...card(),width:400,padding:32,position:"relative",borderColor:C.gold+"40"}}>
+              <button onClick={()=>{setStripeModal(false);setStripeMsg("");}} style={{position:"absolute",top:16,right:16,background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>×</button>
+              <div style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:4,letterSpacing:"-0.02em"}}>Mandatly Pro</div>
+              <div style={{fontSize:13,color:C.muted,marginBottom:24}}>Accès illimité à toutes les fonctionnalités</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
+                {["Prospection DVF + DPE illimitée","Identification propriétaires Vision IA","Signature électronique Yousign","Données synchronisées Supabase","Lucas IA illimité","Courriers postaux Merci Facteur"].map(f=>(
+                  <div key={f} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text}}>
+                    <div style={{width:6,height:6,borderRadius:"50%",background:C.gold,flexShrink:0}}/>
+                    {f}
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:24}}>
+                <span style={{fontSize:32,fontWeight:700,color:C.text,letterSpacing:"-0.03em"}}>49 €</span>
+                <span style={{fontSize:13,color:C.muted}}>/mois · 14 jours d'essai gratuit</span>
+              </div>
+              {stripeMsg?(
+                <div style={{padding:"12px 16px",background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:8,fontSize:13,color:C.green,textAlign:"center"}}>{stripeMsg}</div>
+              ):(
+                <button disabled={stripeLoading} onClick={async()=>{
+                  setStripeLoading(true);
+                  const email = user?.email;
+                  if(!email){setStripeLoading(false);setStripeModal(false);setAuthModal(true);return;}
+                  const r = await fetch("/api/stripe/checkout",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,userId:user?.id})});
+                  const d = await r.json();
+                  setStripeLoading(false);
+                  if(d.url) window.location.href = d.url;
+                  else if(d.error){
+                    if(d.error.includes("non configuré")||d.error.includes("STRIPE_")){
+                      setStripeMsg("Stripe non configuré — ajoutez STRIPE_SECRET_KEY et STRIPE_PRICE_ID dans Vercel.");
+                    } else {
+                      setStripeMsg("Erreur : "+d.error);
+                    }
+                  }
+                }} style={{width:"100%",padding:"14px 0",background:stripeLoading?C.border:C.gold,color:stripeLoading?C.muted:"#000",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:stripeLoading?"not-allowed":"pointer",transition:"all 0.15s"}}>
+                  {stripeLoading?"Redirection...":"Commencer l'essai gratuit"}
+                </button>
+              )}
+              <div style={{fontSize:10,color:C.muted,textAlign:"center",marginTop:12}}>Résiliable à tout moment · Paiement sécurisé Stripe</div>
             </div>
           </div>
         )}

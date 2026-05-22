@@ -61,7 +61,29 @@ async function tryBodacc(adresse: string, cp: string): Promise<string | null> {
   return null;
 }
 
-// Inline vision logic — avoids HTTP call between serverless functions
+function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (d: number) => d * Math.PI / 180;
+  const dLng = toRad(lng2 - lng1);
+  const y = Math.sin(dLng) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLng);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+async function fetchSVImage(googleKey: string, lat: string, lng: string, fov: number, heading: number, pitch: number): Promise<{ base64: string; mediaType: string } | null> {
+  try {
+    const res = await fetch(
+      `https://maps.googleapis.com/maps/api/streetview?size=640x480&location=${lat},${lng}&key=${googleKey}&fov=${fov}&heading=${Math.round(heading)}&pitch=${pitch}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") || "image/jpeg";
+    if (!ct.includes("image")) return null;
+    const base64 = Buffer.from(await res.arrayBuffer()).toString("base64");
+    return { base64, mediaType: ct.includes("png") ? "image/png" : "image/jpeg" };
+  } catch { return null; }
+}
+
+// Multi-shot Vision IA: wide + two zoomed angles targeting gate pillars
 async function tryVision(lat: string, lng: string): Promise<string | null> {
   const googleKey = process.env.GOOGLE_STREETVIEW_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -76,31 +98,33 @@ async function tryVision(lat: string, lng: string): Promise<string | null> {
     const md = await meta.json();
     if (md.status !== "OK") return null;
 
-    const imgRes = await fetch(
-      `https://maps.googleapis.com/maps/api/streetview?size=640x480&location=${lat},${lng}&key=${googleKey}&fov=90&pitch=0`,
-      { signal: AbortSignal.timeout(10000) }
-    );
-    if (!imgRes.ok) return null;
-    const ct = imgRes.headers.get("content-type") || "image/jpeg";
-    if (!ct.includes("image")) return null;
+    // Compute heading from pano position toward property for accurate framing
+    const panoLat: number = md.location?.lat ?? parseFloat(lat);
+    const panoLng: number = md.location?.lng ?? parseFloat(lng);
+    const heading = bearingDeg(panoLat, panoLng, parseFloat(lat), parseFloat(lng));
 
-    const base64 = Buffer.from(await imgRes.arrayBuffer()).toString("base64");
-    const mediaType = ct.includes("png") ? "image/png" : "image/jpeg";
+    // Three shots in parallel: wide + zoom left pillar + zoom right pillar
+    const [wide, zoomLeft, zoomRight] = await Promise.all([
+      fetchSVImage(googleKey, lat, lng, 90, heading, 0),
+      fetchSVImage(googleKey, lat, lng, 45, heading - 18, -12),
+      fetchSVImage(googleKey, lat, lng, 45, heading + 18, -12),
+    ]);
+
+    const shots = [wide, zoomLeft, zoomRight].filter(Boolean) as { base64: string; mediaType: string }[];
+    if (shots.length === 0) return null;
+
+    const content: any[] = shots.map(s => ({
+      type: "image", source: { type: "base64", media_type: s.mediaType, data: s.base64 },
+    }));
+    content.push({
+      type: "text",
+      text: `${shots.length} vue(s) de rue d'une propriété en France (wide + zoom piliers portail). Cherche un nom sur boîte aux lettres, interphone, pilier de portail, plaque ou sonnette. Réponds UNIQUEMENT avec le nom exact visible (ex: DUPONT, Famille MARTIN, SCI LES ACACIAS). Si aucun nom lisible: AUCUN.`,
+    });
 
     const cr = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 80,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-            { type: "text", text: "Vue de rue en France. Nom visible sur boîte aux lettres, interphone, portail ou plaque ? Si oui réponds UNIQUEMENT avec le nom (ex: DUPONT, Famille MARTIN, SCI LES ACACIAS). Sinon: AUCUN." }
-          ]
-        }]
-      }),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 80, messages: [{ role: "user", content }] }),
     });
     if (!cr.ok) return null;
     const cd = await cr.json();
