@@ -68,7 +68,7 @@ async function lancerEstimation(type: string, surface: number, adresse: string, 
 type CrmStatus = "nouveau"|"courrier_pret"|"envoye"|"relance_prevue"|"interesse"|"estimation"|"mandat"|"perdu";
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; signature_request_id?:string; signature_status?:string; };
 type SignatureState = { loading:boolean; url?:string; error?:string; sandbox?:boolean; };
-type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; proprietaire_prenom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; type_local?:string; surface?:number; terrain?:number; pieces?:number; crm_status?:CrmStatus; classe_dpe?:string; };
+type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; proprietaire_prenom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; type_local?:string; surface?:number; terrain?:number; pieces?:number; crm_status?:CrmStatus; classe_dpe?:string; age_jours?:number; };
 
 function getSalutation(p: Prospect): string {
   if (!p.proprietaire_nom) return "Madame, Monsieur,";
@@ -1103,7 +1103,7 @@ export default function App() {
                   <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
                     {[
                       {id:"dvf",label:"DVF",count:dvfStats?.dvf,desc:"transactions"},
-                      {id:"dpe",label:"DPE F/G",count:dvfStats?.dpe,desc:"signaux vente"},
+                      {id:"dpe",label:"DPE",count:dvfStats?.dpe,desc:"signaux vente"},
                       {id:"enrichir",label:"Sirene",count:null,desc:"propriétaires"},
                     ].map(s=>{
                       const st = srcStatus[s.id as keyof typeof srcStatus];
@@ -1121,15 +1121,21 @@ export default function App() {
                 )}
                 {/* Quick-select (après chargement) */}
                 {prospects.length>0&&(()=>{
-                  const dpeProsp = prospects.filter(p=>p.source==="DPE");
+                  const dpeRecents = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)<=180);
+                  const dpeFGAnciens = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)>180);
                   const dvfTop20 = prospects.filter(p=>p.source!=="DPE").slice(0,20);
                   const withNames = prospects.filter(p=>p.proprietaire_nom).length;
                   return(
                     <div>
                       <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}}>
-                        {dpeProsp.length>0&&(
-                          <button onClick={()=>setSelProspects(new Set(dpeProsp.map(p=>p.id)))} style={{padding:"4px 9px",background:C.amber+"18",color:C.amber,border:`1px solid ${C.amber}35`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
-                            DPE F/G ({dpeProsp.length}) — Vente probable
+                        {dpeRecents.length>0&&(
+                          <button onClick={()=>setSelProspects(new Set(dpeRecents.map(p=>p.id)))} style={{padding:"4px 9px",background:"#F97316"+"20",color:"#F97316",border:`1px solid #F9731640`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                            DPE &lt;6 mois ({dpeRecents.length}) — Vente imminente
+                          </button>
+                        )}
+                        {dpeFGAnciens.length>0&&(
+                          <button onClick={()=>setSelProspects(new Set(dpeFGAnciens.map(p=>p.id)))} style={{padding:"4px 9px",background:C.amber+"18",color:C.amber,border:`1px solid ${C.amber}35`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                            DPE F/G ({dpeFGAnciens.length}) — Obligation légale
                           </button>
                         )}
                         <button onClick={()=>setSelProspects(new Set(dvfTop20.map(p=>p.id)))} style={{padding:"4px 9px",background:C.blue+"15",color:C.blue,border:`1px solid ${C.blue}30`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
@@ -1230,7 +1236,8 @@ export default function App() {
                     <div style={{fontSize:10,color:C.muted,marginTop:16}}>DVF = transactions passées · DPE = diagnostics énergétiques F/G</div>
                   </div>
                 ):(()=>{
-                  const dpeList = prospects.filter(p=>p.source==="DPE");
+                  const dpeRecents = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)<=180);
+                  const dpeFGAnciens = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)>180);
                   const dvfList = prospects.filter(p=>p.source!=="DPE");
                   const renderRow = (p: Prospect) => {
                     const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
@@ -1316,13 +1323,22 @@ export default function App() {
                   };
                   return(
                     <>
-                      {dpeList.length>0&&(
+                      {dpeRecents.length>0&&(
+                        <>
+                          <div style={{padding:"6px 14px",background:"#F9731618",borderBottom:"1px solid #F9731630",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                            <span style={{fontSize:10,fontWeight:700,color:"#F97316",letterSpacing:"0.06em",textTransform:"uppercase"}}>DPE &lt;6 mois — Vente imminente ({dpeRecents.length})</span>
+                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dpeRecents.forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:"#F97316",background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Tout sélectionner</button>
+                          </div>
+                          {dpeRecents.map(renderRow)}
+                        </>
+                      )}
+                      {dpeFGAnciens.length>0&&(
                         <>
                           <div style={{padding:"6px 14px",background:`${C.amber}15`,borderBottom:`1px solid ${C.amber}30`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <span style={{fontSize:10,fontWeight:700,color:C.amber,letterSpacing:"0.06em",textTransform:"uppercase"}}>DPE F/G — Vente probable ({dpeList.length})</span>
-                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dpeList.forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:C.amber,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Tout sélectionner</button>
+                            <span style={{fontSize:10,fontWeight:700,color:C.amber,letterSpacing:"0.06em",textTransform:"uppercase"}}>DPE F/G — Obligation légale ({dpeFGAnciens.length})</span>
+                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dpeFGAnciens.forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:C.amber,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Tout sélectionner</button>
                           </div>
-                          {dpeList.map(renderRow)}
+                          {dpeFGAnciens.map(renderRow)}
                         </>
                       )}
                       {dvfList.length>0&&(
