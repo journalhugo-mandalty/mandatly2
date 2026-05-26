@@ -1119,23 +1119,45 @@ export default function App() {
                     {dvfStats&&<div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px"}}><span style={{fontWeight:600,color:C.text}}>{prospects.length}</span> total</div>}
                   </div>
                 )}
-                {/* Filters */}
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  {[{id:"",l:"Tous"},{id:"DVF",l:"DVF"},{id:"DPE",l:"DPE F/G"}].map(f=>(
-                    <button key={f.id} onClick={()=>setProspMethod(f.id)} style={{padding:"3px 9px",background:prospMethod===f.id?C.accent:C.card,color:prospMethod===f.id?(dark?"#080808":"#FAFAFA"):C.muted,border:`1px solid ${prospMethod===f.id?C.accent:C.border}`,borderRadius:20,fontSize:11,fontWeight:prospMethod===f.id?600:400,cursor:"pointer"}}>{f.l}</button>
-                  ))}
-                </div>
+                {/* Quick-select (après chargement) */}
+                {prospects.length>0&&(()=>{
+                  const dpeProsp = prospects.filter(p=>p.source==="DPE");
+                  const dvfTop20 = prospects.filter(p=>p.source!=="DPE").slice(0,20);
+                  const withNames = prospects.filter(p=>p.proprietaire_nom).length;
+                  return(
+                    <div>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}}>
+                        {dpeProsp.length>0&&(
+                          <button onClick={()=>setSelProspects(new Set(dpeProsp.map(p=>p.id)))} style={{padding:"4px 9px",background:C.amber+"18",color:C.amber,border:`1px solid ${C.amber}35`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                            DPE F/G ({dpeProsp.length}) — Vente probable
+                          </button>
+                        )}
+                        <button onClick={()=>setSelProspects(new Set(dvfTop20.map(p=>p.id)))} style={{padding:"4px 9px",background:C.blue+"15",color:C.blue,border:`1px solid ${C.blue}30`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                          Top 20 DVF
+                        </button>
+                        {selProspects.size>0&&(
+                          <button onClick={()=>setSelProspects(new Set())} style={{padding:"4px 9px",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,fontSize:11,cursor:"pointer"}}>
+                            Effacer
+                          </button>
+                        )}
+                      </div>
+                      <div style={{fontSize:10,color:C.muted,lineHeight:1.4}}>
+                        {withNames>0?<><span style={{color:C.gold,fontWeight:600}}>{withNames} noms trouvés</span> (SCI/entreprises) · </>:null}
+                        Pas de nom = courrier en "Madame, Monsieur" — fonctionne très bien
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              {/* Batch action bar */}
+              {/* Batch action bar — CTA principale */}
               {selProspects.size>0&&(
-                <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-                  <span style={{fontSize:12,color:C.text,fontWeight:500}}>{selProspects.size} sélectionné{selProspects.size>1?"s":""}</span>
+                <div style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:C.gold+"12",flexShrink:0}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={{fontSize:12,color:C.text,fontWeight:600}}>{selProspects.size} sélectionné{selProspects.size>1?"s":" ≈"} ≈ {(selProspects.size*1.5).toFixed(0)} €</span>
+                    <span style={{fontSize:10,color:C.muted}}>1,50 € / lettre Merci Facteur</span>
+                  </div>
                   <div style={{display:"flex",gap:6}}>
-                    <button onClick={()=>{
-                      const ps = prospects.filter(p=>selProspects.has(p.id));
-                      if(ps.length>0){setCourrier({prospect:ps[0],template:"prospection",content:"",loading:false});setNav("courriers");}
-                    }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Courrier digital</button>
                     <button disabled={mfSending} onClick={async()=>{
                       if(mfSending) return;
                       const ps = prospects.filter(p=>selProspects.has(p.id) && p.adresse && p.ville);
@@ -1143,17 +1165,19 @@ export default function App() {
                       setMfSending(true); setMfResult(null);
                       let ok=0, err=0;
                       for(const p of ps){
-                        const adresseParts = p.adresse.match(/^(.*?)\s+(\d{5})\s+(.*)$/)||[];
-                        const cp = p.ville?.match(/\d{5}/)?.[0] || adresseParts[2] || "";
-                        const ville = p.ville?.replace(/\d{5}\s*/,"").trim() || adresseParts[3] || p.ville;
-                        const content = `Madame, Monsieur,\n\nNous représentons ${agent.agence} et sommes spécialisés dans les transactions immobilières de votre secteur.\n\nVotre bien situé au ${p.adresse}, ${p.ville} nous intéresse particulièrement. Nous disposons actuellement d'acheteurs qualifiés à la recherche d'un bien correspondant à votre propriété.\n\nNous serions heureux de vous proposer une estimation gratuite et sans engagement.\n\nCordialement,\n${agent.prenom} ${agent.nom}\n${agent.agence}`;
+                        const cpMatch = p.adresse.match(/\b(\d{5})\b/)||p.ville?.match(/\d{5}/);
+                        const cp = cpMatch?.[1]||cpMatch?.[0]||"33000";
+                        const villeClean = p.ville?.replace(/\d{5}\s*/,"").trim()||p.ville;
+                        const sal = getSalutation(p);
+                        const typeLabel = p.type_local||(p.source==="DPE"?"bien":"bien");
+                        const content = `${sal}\n\n${agent.agence} est spécialisée dans les transactions immobilières de votre secteur. Nous connaissons parfaitement votre quartier et le marché local.\n\nVotre ${typeLabel.toLowerCase()} au ${p.adresse} retient notre attention. Nous disposons d'acquéreurs sérieux, avec financement validé, à la recherche d'un bien de ce type dans ce secteur précis.\n\nNous vous proposons une estimation gratuite et confidentielle, sans engagement de votre part.\n\nCordialement,\n${agent.prenom} ${agent.nom}\nAgent immobilier — ${agent.agence}`;
                         const r = await fetch("/api/merci-facteur",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-                          dest_nom: p.proprietaire_nom || "Madame, Monsieur",
+                          dest_nom: p.proprietaire_nom||"Occupant",
                           dest_adresse: p.adresse,
-                          dest_cp: cp || "33000",
-                          dest_ville: ville,
-                          exp_nom: `${agent.prenom} ${agent.nom}`,
-                          exp_adresse: agent.email,
+                          dest_cp: cp,
+                          dest_ville: villeClean,
+                          exp_nom:`${agent.prenom} ${agent.nom}`,
+                          exp_adresse:agent.email,
                           content,
                         })});
                         (await r.json()).ok ? ok++ : err++;
@@ -1166,88 +1190,90 @@ export default function App() {
                           id:Date.now()+Math.random(), prospect_id:p.id,
                           prospect_adresse:p.adresse, prospect_ville:p.ville,
                           date:now, template:"prospection", statut:"envoye" as const,
-                          content:"Courrier papier via Merci Facteur",
+                          content:getSalutation(p).slice(0,40),
                         }));
                         setCourrierHisto(h=>[...newHisto,...h]);
                         setSelProspects(new Set());
+                        setNav("courriers");
                       }
-                    }} style={{background:C.gold,color:"#000",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:mfSending?"not-allowed":"pointer"}}>
-                      {mfSending?"Envoi...":"Merci Facteur →"}
+                    }} style={{flex:1,background:mfSending?C.border:C.gold,color:mfSending?C.muted:"#000",border:"none",borderRadius:8,padding:"9px 0",fontSize:13,fontWeight:700,cursor:mfSending?"not-allowed":"pointer",transition:"all 0.15s"}}>
+                      {mfSending?"Envoi en cours...":"Envoyer via Merci Facteur →"}
                     </button>
                   </div>
                 </div>
               )}
               {mfResult&&(
                 <div style={{padding:"8px 16px",background:mfResult.err>0?C.red+"15":C.green+"15",borderBottom:`1px solid ${C.border}`,fontSize:11,color:mfResult.err>0?C.red:C.green,flexShrink:0}}>
-                  {mfResult.ok>0&&`${mfResult.ok} courrier(s) envoyé(s). `}
+                  {mfResult.ok>0&&`${mfResult.ok} lettre(s) postées. Suivi dans Courriers. `}
                   {mfResult.err>0&&`${mfResult.err} erreur(s) — configurez MERCI_FACTEUR_TOKEN dans Vercel.`}
                 </div>
               )}
 
-              {/* Prospects list */}
+              {/* Prospects list groupée */}
               <div style={{flex:1,overflowY:"auto"}}>
-                {prospects.filter(p=>!prospMethod||p.source===prospMethod).length===0?(
-                  <div style={{padding:24,textAlign:"center",color:C.muted}}>
-                    <div style={{fontFamily:DISPLAY,fontSize:20,fontWeight:400,fontStyle:"italic",marginBottom:8,color:C.text}}>Aucun prospect</div>
-                    <div style={{fontSize:12}}>Entrez un code postal ou une commune et cliquez Analyser</div>
-                    <div style={{fontSize:11,marginTop:8,color:C.muted}}>Sources : DVF Etalab · DPE ADEME · Sirene · Cadastre IGN</div>
+                {prospects.length===0?(
+                  <div style={{padding:28,textAlign:"center",color:C.muted}}>
+                    <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:400,fontStyle:"italic",marginBottom:10,color:C.text}}>Comment ça marche</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:8,textAlign:"left",maxWidth:260,margin:"0 auto"}}>
+                      {[
+                        ["1. Rechercher","Entrez une ville ou un code postal"],
+                        ["2. Sélectionner","Cliquez 'DPE F/G' ou 'Top 20 DVF' — ce sont les plus susceptibles de vendre"],
+                        ["3. Envoyer","Merci Facteur poste les lettres physiques (1,50€/lettre, sans vous déplacer)"],
+                        ["4. Suivre","Onglet Courriers — marquez les réponses et déclenchez les relances"],
+                      ].map(([t,d])=>(
+                        <div key={t} style={{padding:"8px 10px",background:C.card,border:`1px solid ${C.border}`,borderRadius:7}}>
+                          <div style={{fontSize:11,fontWeight:600,color:C.accent,marginBottom:2}}>{t}</div>
+                          <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>{d}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{fontSize:10,color:C.muted,marginTop:16}}>DVF = transactions passées · DPE = diagnostics énergétiques F/G</div>
                   </div>
-                ):(
-                  prospects.filter(p=>!prospMethod||p.source===prospMethod).map(p=>{
+                ):(()=>{
+                  const dpeList = prospects.filter(p=>p.source==="DPE");
+                  const dvfList = prospects.filter(p=>p.source!=="DPE");
+                  const renderRow = (p: Prospect) => {
                     const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
                     const isSel = selProspects.has(p.id);
                     const isActive = selProspect?.id===p.id;
-                    const srcColor = p.source==="DPE"?C.amber:p.proprietaire_source==="vision-ia"?C.purple:C.blue;
-                    const srcLabel = p.source==="DPE"?`DPE${(p as any).classe_dpe?" "+(p as any).classe_dpe:""}`:p.proprietaire_source==="vision-ia"?"Vision IA":"DVF";
+                    const isDpe = p.source==="DPE";
+                    const srcColor = isDpe?C.amber:C.blue;
+                    const srcLabel = isDpe?`DPE${(p as any).classe_dpe?" "+(p as any).classe_dpe:""}`:p.proprietaire_source==="vision-ia"?"Vision IA":"DVF";
                     return(
                       <div key={p.id} id={"prospect-"+p.id} onClick={()=>{
                         setSelProspect(isActive?null:p);
                         if(!isActive && (p as any).lat && (p as any).lng) setMapFlyTo({lat:(p as any).lat,lng:(p as any).lng,zoom:17,key:Date.now()});
-                      }} style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:isActive?C.accentBg:isSel?C.accentBg+"70":"transparent",transition:"background 0.15s"}}>
-                        {/* ROW HEADER */}
+                      }} style={{padding:"9px 14px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:isActive?C.accentBg:isSel?C.gold+"10":"transparent",transition:"background 0.15s"}}>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          {/* Checkbox */}
                           <div onClick={e=>{e.stopPropagation();setSelProspects(s=>{const n=new Set(s);isSel?n.delete(p.id):n.add(p.id);return n;})}} style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${isSel?C.gold:C.border}`,background:isSel?C.gold:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all 0.15s"}}>
                             {isSel&&<div style={{width:6,height:6,borderRadius:1,background:"#fff"}}/>}
                           </div>
-                          {/* Score */}
                           <div style={{width:28,height:28,borderRadius:6,background:col+"15",border:`1px solid ${col}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
-                          {/* Address + meta */}
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
                             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:1,flexWrap:"wrap"}}>
-                              {/* Owner name — most important info */}
                               {p.proprietaire_chargement?(
-                                <span style={{fontSize:10,color:C.muted,fontStyle:"italic",animation:"pulse 1.5s infinite"}}>recherche...</span>
+                                <span style={{fontSize:10,color:C.muted,fontStyle:"italic",animation:"pulse 1.5s infinite"}}>recherche nom...</span>
                               ):p.proprietaire_nom?(
                                 <span style={{fontSize:11,fontWeight:700,color:C.gold}}>{p.proprietaire_nom}</span>
                               ):(
                                 <span style={{fontSize:10,color:C.muted}}>{p.ville}</span>
                               )}
-                              {/* Source badge */}
                               <span style={{fontSize:9,background:srcColor+"18",color:srcColor,border:`1px solid ${srcColor}35`,borderRadius:3,padding:"0 4px",fontWeight:600,lineHeight:"16px",flexShrink:0}}>{srcLabel}</span>
-                              {/* Owner source badge */}
                               {p.proprietaire_nom&&p.proprietaire_source&&p.proprietaire_source!=="inconnu"&&(
-                                <span style={{fontSize:9,background:p.proprietaire_source==="vision-ia"?C.purple+"18":C.green+"10",color:p.proprietaire_source==="vision-ia"?C.purple:C.muted,border:`1px solid ${p.proprietaire_source==="vision-ia"?C.purple+"30":C.border}`,borderRadius:3,padding:"0 4px",fontWeight:600,lineHeight:"16px"}}>
-                                  {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="sirene+dirigeant"?"Sirene":p.proprietaire_source==="vision-ia"?"Vision IA":p.proprietaire_source==="cadastre"?"Cadastre":"Sirene"}
+                                <span style={{fontSize:9,background:C.green+"10",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"0 4px",fontWeight:600,lineHeight:"16px"}}>
+                                  {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="vision-ia"?"Vision IA":p.proprietaire_source==="bodacc"?"BODACC":"Sirene"}
                                 </span>
                               )}
                             </div>
                           </div>
-                          {/* Courrier button — always visible */}
-                          <button onClick={e=>{e.stopPropagation();setSelProspect(p);}} title="Générer un courrier" style={{flexShrink:0,background:isActive?C.accent:C.card,color:isActive?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${isActive?C.accent:C.border}`,borderRadius:6,padding:"4px 9px",fontSize:11,fontWeight:600,cursor:"pointer",transition:"all 0.15s",whiteSpace:"nowrap"}}>
-                            Courrier →
+                          <button onClick={e=>{e.stopPropagation();setSelProspect(p);}} title="Générer courrier" style={{flexShrink:0,background:isActive?C.accent:C.card,color:isActive?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${isActive?C.accent:C.border}`,borderRadius:6,padding:"4px 8px",fontSize:10,fontWeight:600,cursor:"pointer",transition:"all 0.15s",whiteSpace:"nowrap"}}>
+                            Courrier
                           </button>
                         </div>
-                        {/* Score bar */}
-                        <div style={{height:2,background:C.border,borderRadius:1,marginTop:7,marginLeft:22}}>
-                          <div style={{width:`${p.score}%`,height:"100%",background:col,borderRadius:1,transition:"width 0.6s"}}/>
-                        </div>
-                        {/* Notes (compact) */}
-                        <div style={{fontSize:10,color:C.muted,marginTop:4,marginLeft:22,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.notes}</div>
-                        {/* Expanded cadastre/Sirene detail */}
+                        <div style={{fontSize:10,color:C.muted,marginTop:3,marginLeft:22,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.notes}</div>
                         {isActive&&propData[String(p.id)]&&(
-                          <div style={{marginTop:8,marginLeft:22,padding:"7px 10px",background:C.card,borderRadius:6,border:`1px solid ${C.border}`}}>
+                          <div style={{marginTop:6,marginLeft:22,padding:"6px 10px",background:C.card,borderRadius:6,border:`1px solid ${C.border}`}}>
                             {propData[String(p.id)].parcelles?.length>0&&(
                               <div style={{marginBottom:3,fontSize:11,color:C.text}}>
                                 <span style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginRight:4}}>Cadastre</span>
@@ -1263,13 +1289,12 @@ export default function App() {
                             )}
                           </div>
                         )}
-                        {/* Extra actions row when expanded */}
                         {isActive&&(
-                          <div style={{marginTop:7,marginLeft:22,display:"flex",gap:5}}>
+                          <div style={{marginTop:6,marginLeft:22,display:"flex",gap:5}}>
                             {(p as any).lat&&(p as any).lng&&(
-                              <button onClick={e=>{e.stopPropagation();setSvModal({lat:(p as any).lat,lng:(p as any).lng,adresse:p.adresse});}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 9px",fontSize:10,color:C.text,cursor:"pointer"}}>Street View</button>
+                              <button onClick={e=>{e.stopPropagation();setSvModal({lat:(p as any).lat,lng:(p as any).lng,adresse:p.adresse});}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px",fontSize:10,color:C.text,cursor:"pointer"}}>Street View</button>
                             )}
-                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse le prospect au ${p.adresse}${p.proprietaire_nom?" — propriétaire : "+p.proprietaire_nom:""}. Score ${p.score}/100. ${p.notes}. Recommande une stratégie.`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 9px",fontSize:10,color:C.text,cursor:"pointer"}}>Lucas</button>
+                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse le prospect au ${p.adresse}${p.proprietaire_nom?" — propriétaire : "+p.proprietaire_nom:""}. Score ${p.score}/100. ${p.notes}. Recommande une stratégie.`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px",fontSize:10,color:C.text,cursor:"pointer"}}>Lucas</button>
                             {(p as any).lat&&(p as any).lng&&!propData[String(p.id)]&&(
                               <button onClick={async e=>{
                                 e.stopPropagation();
@@ -1280,7 +1305,7 @@ export default function App() {
                                   setPropData(x=>({...x,[key]:d}));
                                 }catch{}
                                 setPropLoading(null);
-                              }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 9px",fontSize:10,color:C.text,cursor:"pointer"}}>
+                              }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px",fontSize:10,color:C.text,cursor:"pointer"}}>
                                 {propLoading===String(p.id)?"...":"Cadastre"}
                               </button>
                             )}
@@ -1288,21 +1313,37 @@ export default function App() {
                         )}
                       </div>
                     );
-                  })
-                )}
+                  };
+                  return(
+                    <>
+                      {dpeList.length>0&&(
+                        <>
+                          <div style={{padding:"6px 14px",background:`${C.amber}15`,borderBottom:`1px solid ${C.amber}30`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                            <span style={{fontSize:10,fontWeight:700,color:C.amber,letterSpacing:"0.06em",textTransform:"uppercase"}}>DPE F/G — Vente probable ({dpeList.length})</span>
+                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dpeList.forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:C.amber,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Tout sélectionner</button>
+                          </div>
+                          {dpeList.map(renderRow)}
+                        </>
+                      )}
+                      {dvfList.length>0&&(
+                        <>
+                          <div style={{padding:"6px 14px",background:`${C.blue}10`,borderBottom:`1px solid ${C.blue}20`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                            <span style={{fontSize:10,fontWeight:700,color:C.blue,letterSpacing:"0.06em",textTransform:"uppercase"}}>DVF — Anciens acquéreurs ({dvfList.length})</span>
+                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dvfList.slice(0,20).forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:C.blue,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Top 20</button>
+                          </div>
+                          {dvfList.map(renderRow)}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
-              {/* Select all bar */}
-              {prospects.length>0&&(
-                <div style={{padding:"10px 16px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:C.card}}>
-                  <button onClick={()=>{
-                    const filtered = prospects.filter(p=>!prospMethod||p.source===prospMethod);
-                    if(selProspects.size===filtered.length) setSelProspects(new Set());
-                    else setSelProspects(new Set(filtered.map(p=>p.id)));
-                  }} style={{fontSize:11,color:C.muted,background:"transparent",border:"none",cursor:"pointer",padding:0}}>
-                    {selProspects.size>0?"Tout désélectionner":"Tout sélectionner"}
-                  </button>
-                  <span style={{fontSize:11,color:C.muted}}>{selProspects.size}/{prospects.filter(p=>!prospMethod||p.source===prospMethod).length}</span>
+              {/* Footer */}
+              {prospects.length>0&&selProspects.size===0&&(
+                <div style={{padding:"8px 16px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:C.card}}>
+                  <span style={{fontSize:11,color:C.muted}}>{prospects.length} prospects · {prospects.filter(p=>p.proprietaire_nom).length} noms identifiés</span>
+                  <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",fontWeight:500,padding:0}}>Suivi →</button>
                 </div>
               )}
             </div>
@@ -2149,32 +2190,89 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
           <div style={{flex:1,display:"flex",overflow:"hidden"}}>
             {/* LEFT: prospects list */}
             <div style={{width:300,borderRight:`1px solid ${C.border}`,background:C.surface,display:"flex",flexDirection:"column",flexShrink:0}}>
-              <div style={{padding:"20px",borderBottom:`1px solid ${C.border}`}}>
-                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:4}}>Courriers</div>
-                <div style={{fontSize:12,color:C.muted}}>Prospection postale personnalisée</div>
+              <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`}}>
+                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:8}}>Suivi courriers</div>
+                {(()=>{
+                  const now = Date.now();
+                  const sent = courrierHisto.length;
+                  const replied = courrierHisto.filter(h=>h.statut==="repondu").length;
+                  const overdue = courrierHisto.filter(h=>{
+                    if(h.statut!=="envoye") return false;
+                    const d = new Date(h.date.split("/").reverse().join("-")).getTime();
+                    return (now-d)>21*24*60*60*1000;
+                  }).length;
+                  if(!sent) return <div style={{fontSize:12,color:C.muted}}>Aucun courrier envoyé</div>;
+                  return(
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      <div style={{background:C.blue+"15",borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:600,color:C.blue}}>{sent} envoyés</div>
+                      {replied>0&&<div style={{background:C.green+"15",borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:600,color:C.green}}>{replied} répondus</div>}
+                      {overdue>0&&<div style={{background:C.amber+"15",borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:600,color:C.amber}}>{overdue} à relancer</div>}
+                    </div>
+                  );
+                })()}
               </div>
               <div style={{flex:1,overflowY:"auto"}}>
-                {prospects.length===0?(
-                  <div style={{padding:20,textAlign:"center",color:C.muted,fontSize:12}}>Lancez une prospection DVF pour voir les prospects</div>
-                ):(
-                  prospects.map(p=>{
-                    const col=p.score>=85?C.green:p.score>=70?C.amber:C.red;
-                    const sel=courrier?.prospect?.id===p.id;
-                    return(
-                      <div key={p.id} onClick={()=>setCourrier({prospect:p,template:"prospection",content:"",loading:false})} style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:sel?C.accentBg:"transparent",transition:"background 0.15s"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <div style={{width:26,height:26,borderRadius:6,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
-                            <div style={{fontSize:11,color:C.muted}}>{p.proprietaire_nom||p.ville}</div>
+                {/* Historique global - indépendant des prospects chargés */}
+                {courrierHisto.length>0&&(
+                  <>
+                    <div style={{padding:"6px 16px",background:C.surface,borderBottom:`1px solid ${C.border}`,fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>Historique</div>
+                    {courrierHisto.map(h=>{
+                      const overdue = h.statut==="envoye"&&(Date.now()-new Date(h.date.split("/").reverse().join("-")).getTime())>21*24*60*60*1000;
+                      return(
+                        <div key={h.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,background:overdue?C.amber+"08":"transparent"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.prospect_adresse}</div>
+                              <div style={{fontSize:10,color:C.muted}}>{h.prospect_ville} · {h.date}</div>
+                            </div>
+                            <span style={{fontSize:9,fontWeight:600,padding:"2px 6px",borderRadius:4,flexShrink:0,
+                              color:h.statut==="repondu"?C.green:overdue?C.amber:C.blue,
+                              background:(h.statut==="repondu"?C.green:overdue?C.amber:C.blue)+"15"}}>
+                              {h.statut==="repondu"?"Répondu":overdue?"À relancer":"Envoyé"}
+                            </span>
                           </div>
-                          {courrierHisto.some(h=>h.prospect_id===p.id)&&(
-                            <div style={{width:7,height:7,borderRadius:"50%",background:courrierHisto.find(h=>h.prospect_id===p.id)?.statut==="repondu"?C.green:C.amber,flexShrink:0}}/>
-                          )}
+                          <div style={{display:"flex",gap:4}}>
+                            {h.statut==="envoye"&&<button onClick={()=>setCourrierHisto(hs=>hs.map(x=>x.id===h.id?{...x,statut:"repondu"}:x))} style={{fontSize:10,background:C.green+"15",color:C.green,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer",fontWeight:500}}>Répondu</button>}
+                            {(h.statut==="envoye"||overdue)&&(
+                              <button onClick={()=>{
+                                const p = prospects.find(x=>String(x.id)===String(h.prospect_id));
+                                if(p){setCourrier({prospect:p,template:"relance",content:"",loading:false});}
+                              }} style={{fontSize:10,background:C.amber+"15",color:C.amber,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer",fontWeight:500}}>Relancer</button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })
+                      );
+                    })}
+                  </>
+                )}
+                {/* Prospects pas encore contactés */}
+                {prospects.length>0&&(
+                  <>
+                    <div style={{padding:"6px 16px",background:C.surface,borderBottom:`1px solid ${C.border}`,fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:courrierHisto.length>0?0:0}}>Prospects chargés — nouveau courrier</div>
+                    {prospects.map(p=>{
+                      const col=p.score>=85?C.green:p.score>=70?C.amber:C.red;
+                      const sel=courrier?.prospect?.id===p.id;
+                      const hasHisto=courrierHisto.some(h=>h.prospect_id===p.id);
+                      return(
+                        <div key={p.id} onClick={()=>setCourrier({prospect:p,template:"prospection",content:"",loading:false})} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:sel?C.accentBg:"transparent",transition:"background 0.15s"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{width:24,height:24,borderRadius:5,background:col+"15",border:`1px solid ${col}25`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:11,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
+                              <div style={{fontSize:10,color:C.muted}}>{p.proprietaire_nom||p.ville}</div>
+                            </div>
+                            {hasHisto&&<div style={{width:6,height:6,borderRadius:"50%",background:courrierHisto.find(h=>h.prospect_id===p.id)?.statut==="repondu"?C.green:C.amber,flexShrink:0}}/>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+                {prospects.length===0&&courrierHisto.length===0&&(
+                  <div style={{padding:20,textAlign:"center",color:C.muted,fontSize:12}}>
+                    <div style={{marginBottom:6}}>Lancez une prospection pour générer des courriers</div>
+                    <button onClick={()=>setNav("prospects")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",fontWeight:500}}>Aller à Prospection →</button>
+                  </div>
                 )}
               </div>
             </div>
