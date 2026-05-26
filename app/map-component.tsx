@@ -9,13 +9,14 @@ type Prospect = {
 type Props = {
   prospects: Prospect[]; onSelect?: (p: Prospect) => void;
   center: [number, number]; dark?: boolean; satellite?: boolean;
+  flyToTarget?: { lat: number; lng: number; zoom?: number; key: any };
 };
 
 const TILE_PLAN_DARK = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 const TILE_PLAN_LIGHT = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
 const TILE_SATELLITE = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
-export default function MapComponent({ prospects, onSelect, center, dark = true, satellite: initSat = false }: Props) {
+export default function MapComponent({ prospects, onSelect, center, dark = true, satellite: initSat = false, flyToTarget }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
@@ -65,6 +66,13 @@ export default function MapComponent({ prospects, onSelect, center, dark = true,
     map.once("moveend", () => { map.flyTo([newLat, newLng], 13, { animate: true, duration: 1.4 }); });
     map.flyTo([prevLat, prevLng], 5, { animate: true, duration: 0.8 });
   }, [center[0], center[1], ready]);
+
+  // Direct flyTo on a specific prospect (list click)
+  useEffect(() => {
+    if (!ready || !mapInstance.current || !flyToTarget) return;
+    mapInstance.current.flyTo([flyToTarget.lat, flyToTarget.lng], flyToTarget.zoom ?? 17, { animate: true, duration: 1.2 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flyToTarget?.key, ready]);
 
   useEffect(() => {
     if (!ready || !mapInstance.current) return;

@@ -1,5 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const MALE_NAMES = new Set([
+  "ALEXANDRE","ALEXIS","ARNAUD","ARTHUR","BAPTISTE","BENJAMIN","BERNARD","BERTRAND","BRUNO",
+  "CHARLES","CHRISTIAN","CHRISTOPHE","CLEMENT","DAMIEN","DANIEL","DAVID","DENIS","DIDIER",
+  "EDOUARD","EMILE","ERIC","ETIENNE","FABIEN","FABRICE","FELIX","FLORIAN","FLORENT",
+  "FRANCOIS","FREDERIC","GABRIEL","GAUTIER","GEOFFREY","GEORGES","GERARD","GILBERT",
+  "GILLES","GUILLAUME","GUY","HENRI","HERVE","HUGO","IVAN","JACKY","JACQUES","JEAN",
+  "JEROME","JOEL","JONATHAN","JOSEPH","JULIEN","KEVIN","KILIAN","LAURENT","LEON","LIONEL",
+  "LOIC","LOUIS","LUC","LUCAS","MARC","MARTIN","MATHIEU","MATHIS","MAXIME","MELVIN",
+  "MICHAEL","MICKAEL","MICHEL","MORGAN","NATHAN","NICOLAS","NOEL","NOAH","OLIVIER",
+  "PASCAL","PATRICK","PAUL","PHILIPPE","PIERRE","QUENTIN","RAPHAEL","REMI","RENAUD",
+  "RICHARD","ROBERT","ROMAIN","ROMEO","SAMUEL","SEBASTIEN","SIMON","STEPHANE","STEVE",
+  "SYLVAIN","TEDDY","THEO","THIBAULT","THIBAUT","THIERRY","THOMAS","TIMOTHEE","TOM",
+  "TONY","TRISTAN","ULRICH","VALENTIN","VICTOR","VINCENT","WILLIAM","XAVIER","YANNICK",
+  "YVES","ADRIEN","ALAN","ALBERT","ANDRE","ANTHONY","ANTOINE","ARMAND","AUGUSTIN",
+  "BENOIT","BORIS","CARL","CEDRIC","CORENTIN","CYRIL","DAMIAN","EDGAR","EMILIEN",
+  "EMMANUEL","ENZO","FERNAND","GAUTIER","GREGOIRE","GRÉGORY","HANS","HAROLD","HENRY",
+  "HUBERT","ISMAEL","JEAN-CLAUDE","JEAN-PAUL","JEAN-PIERRE","JEAN-LUC","JEAN-MARC",
+  "JEAN-BAPTISTE","JEAN-FRANCOIS","JOACHIM","JORIS","JOSE","JOSSELIN","JULES",
+  "LANCELOT","LUCA","LUDOVIC","LUKAS","MAËL","MAEL","NANS","NORDINE","OSCAR","PATRICE",
+  "PETER","REGIS","ROLAND","RUDY","SERGE","STANISLAS","SYLVAIN","TOMMY","THIBAULT",
+  "VALERY","VIVIAN","WILLY","YANN","GAETAN","GAEL","ISAAK","ROMEO"
+]);
+
+const FEMALE_NAMES = new Set([
+  "AGNES","ALICE","AMANDINE","AMELIE","ANAIS","ANAÏS","ANGELIQUE","ANNE","AURELIE",
+  "AXELLE","BEATRICE","BRIGITTE","CAMILLE","CAPUCINE","CAROLINE","CARINE","CATHERINE",
+  "CECILE","CELINE","CHARLOTTE","CHANTAL","CHARLINE","CHLOE","CHRISTELLE","CHRISTIANE",
+  "CLAIRE","CLEMENCE","CLOTILDE","CORALIE","CORINNE","DELPHINE","DAPHNE","DIANE",
+  "DOROTHEE","EDITH","ELEONORE","ELISA","ELISE","ELOISE","EMILIE","EMMA","ESTELLE",
+  "EVA","EVE","FANNY","FELICITE","FLORENCE","FRANCOISE","GAELLE","GENEVIEVE","GERALDINE",
+  "GWENAELLE","HELENE","INGRID","INES","ISABELLE","JADE","JENNIFER","JESSICA","JOELLE",
+  "JOSEPHINE","JULIE","JULIETTE","JUSTINE","KARINE","LAETITIA","LAURA","LAURE",
+  "LAURENCE","LAURIE","LEA","LILIANE","LILAS","LOLA","LOUISE","LUCIE","MAEVA","MAGALI",
+  "MANON","MARGAUX","MARGOT","MARIE","MARINE","MARLENE","MARTINE","MATHILDE","MAUD",
+  "MELISSA","MELODIE","MICHELLE","MIREILLE","MONIQUE","MORGANE","MURIEL","NADEGE",
+  "NATHALIE","NICOLE","NOEMI","NOEMIE","NORA","ODILE","OLIVIA","PASCALE","PAULINE",
+  "PATRICIA","PENELOPE","PERRINE","RACHEL","SABINE","SABRINA","SANDRINE","SARAH",
+  "SELENE","SEVERINE","SIMONE","SOLANGE","SOPHIE","STEPHANIE","SYLVIE","TIFFANY",
+  "THERESE","VALERIE","VANESSA","VERONIQUE","VIRGINIE","ZOE","ADELINE","ADELE",
+  "AGATHE","ALINE","ALISON","ANDREA","ANDREE","ANNA","ANNABELLE","ANNICK","ANNETTE",
+  "ARMELLE","AURORE","BLANDINE","CHRISITNE","CLELIA","CYRIELLE","DOMINIQUE","ELEONORE",
+  "EMILIENNE","EMMANUELLE","EUGENIE","GENEVIÈVE","GHISLAINE","GWENOLA","INÈS","IRIS",
+  "ISABEAU","JACQUELINE","JASMINE","JOHANNE","KATELL","LAURY","LEONORE","LISELOTTE",
+  "LISETTE","LORRAINE","MAËLLE","MAELLE","MARIANNE","MAUREEN","ODETTE","PRISCILLA",
+  "RAPHAELLE","RENEE","ROSALIE","ROSALINE","ROSINE","SOLENNE","STELLA","YOLANDE",
+  "YVETTE","YVONNE","ZORAH"
+]);
+
+function detectCivilite(prenoms: string): "Monsieur" | "Madame" | null {
+  if (!prenoms) return null;
+  const first = prenoms.split(/[\s-]/)[0]
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+  if (MALE_NAMES.has(first)) return "Monsieur";
+  if (FEMALE_NAMES.has(first)) return "Madame";
+  return null;
+}
+
 function cleanName(nom: string, prenoms: string): string {
   const n = (nom || "").replace(/\s*\([^)]+\)/g, "").trim();
   const p = (prenoms || "").split(" ")[0] || "";
@@ -169,7 +228,9 @@ export async function GET(req: NextRequest) {
 
   let entreprises: any[] = [];
   let proprietaire_nom = "";
+  let proprietaire_prenom = "";
   let proprietaire_source = "inconnu";
+  let civilite: "Monsieur" | "Madame" | "" = "";
 
   if (sireneRes.status === "fulfilled" && sireneRes.value.ok) {
     const d = await sireneRes.value.json();
@@ -196,8 +257,11 @@ export async function GET(req: NextRequest) {
     if (target) {
       const dgs: any[] = target.dirigeants || [];
       if (dgs.length > 0) {
+        proprietaire_prenom = (dgs[0].prenoms || "").split(" ")[0] || "";
         proprietaire_nom = cleanName(dgs[0].nom, dgs[0].prenoms);
         proprietaire_source = sci ? "sci+dirigeant" : "sirene+dirigeant";
+        const detected = detectCivilite(dgs[0].prenoms || "");
+        if (detected) civilite = detected;
       } else {
         proprietaire_nom = (target.nom_complet || target.nom_raison_sociale || "").split("(")[0].trim();
         proprietaire_source = sci ? "sci" : "sirene";
@@ -237,7 +301,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     parcelles, entreprises, deepLink,
-    proprietaire_nom, proprietaire_source,
+    proprietaire_nom, proprietaire_prenom, civilite, proprietaire_source,
     vision_enabled: !!googleKey,
     pagesBlanchesUrl, annuaireUrl,
   });
