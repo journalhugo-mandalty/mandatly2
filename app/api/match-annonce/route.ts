@@ -78,21 +78,29 @@ async function fetchPhotoB64(url: string): Promise<string | null> {
 }
 
 function extractLocalityKeyword(adresse: string): string | null {
-  // "L'Oumède Nord 83350 Ramatuelle" → "Oumede"
-  // Remove postal code, commune at end, street prefixes, normalize accents
-  const clean = adresse
-    .replace(/\b\d{5}\b.*$/, "")  // remove postal code and everything after
-    .replace(/^(\d+\s*(BIS|TER|QUATER)?\s*)/i, "")  // remove street number
-    .replace(/^(RUE|AVENUE|AVE|AV|COURS|CRS|ALLEE|ALL|BOULEVARD|BD|IMPASSE|IMP|CHEMIN|CHE|PLACE|PL|LIEU[- ]DIT|LD|HAMEAU|L\'|LA |LES |LE )\s*/gi, "")
-    .trim();
-  if (clean.length < 4) return null;
-  // Take first significant word (drop directionals like "Nord", "Sud", etc.)
-  const word = clean.split(/\s+/).find(w =>
-    w.length >= 4 && !/^(NORD|SUD|EST|OUEST|HAUT|BAS|GRAND|PETIT|VIEUX|VIEILLE)$/i.test(w)
-  );
-  if (!word || word.length < 4) return null;
-  // Normalize accents
-  return word.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]/g, "");
+  // "154 Route de Collebasse 83350 Ramatuelle" → "Collebasse"
+  // "L'Oumède Nord 83350 Ramatuelle"           → "Oumede"
+  // "10 Avenue des Girelles 83350 Ramatuelle"  → "Girelles"
+  const GENERIC = /^(NORD|SUD|EST|OUEST|HAUT|BAS|GRAND|PETIT|VIEUX|VIEILLE|DE|DU|DES|D|L|LA|LES|LE|EN|AU|AUX|ET|SAINT|SAINTE|STE|ST)$/i;
+  const STREET_TYPES = /^(RUE|AVENUE|AVE|AV|COURS|CRS|ALLEE|ALL|BOULEVARD|BD|IMPASSE|IMP|CHEMIN|CHE|ROUTE|RTE|VOIE|PASSAGE|SENTIER|PLACE|PL|LIEU[- ]DIT|LD|HAMEAU|DOMAINE|DOM|LOTISSEMENT|LOT|VILLA|QUARTIER|QUA|DRAILLE|TRAVERSE|TRV|MONTEE|DESCENTE)$/i;
+  const words = adresse
+    .replace(/\b\d{5}\b.*$/, "")       // remove postal code + everything after
+    .replace(/^[\d]+\s*(BIS|TER|QUATER)?\s*/i, "")  // remove street number
+    .split(/[\s']+/)                    // split on spaces and apostrophes
+    .filter(w => w.length >= 2);
+  // Skip street type words and generic words, find first specific word >= 4 chars
+  let skip = true;
+  for (const w of words) {
+    if (skip && (STREET_TYPES.test(w) || GENERIC.test(w))) continue;
+    skip = false;
+    if (GENERIC.test(w)) continue;  // skip "de", "du", "des" after street type
+    if (w.length < 4) continue;
+    if (/^\d+$/.test(w)) continue;  // skip pure numbers (years, street numbers)
+    // Normalize accents and non-alphanum
+    const norm = w.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]/g, "");
+    if (norm.length >= 4) return norm;
+  }
+  return null;
 }
 
 function pickBestSirene(results: any[]): {nom:string;source:string;entreprise:string} | null {
