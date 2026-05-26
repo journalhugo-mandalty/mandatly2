@@ -77,42 +77,74 @@ async function fetchPhotoB64(url: string): Promise<string | null> {
   } catch { return null; }
 }
 
+function extractLocalityKeyword(adresse: string): string | null {
+  // "L'Oumède Nord 83350 Ramatuelle" → "Oumede"
+  // Remove postal code, commune at end, street prefixes, normalize accents
+  const clean = adresse
+    .replace(/\b\d{5}\b.*$/, "")  // remove postal code and everything after
+    .replace(/^(\d+\s*(BIS|TER|QUATER)?\s*)/i, "")  // remove street number
+    .replace(/^(RUE|AVENUE|AVE|AV|COURS|CRS|ALLEE|ALL|BOULEVARD|BD|IMPASSE|IMP|CHEMIN|CHE|PLACE|PL|LIEU[- ]DIT|LD|HAMEAU|L\'|LA |LES |LE )\s*/gi, "")
+    .trim();
+  if (clean.length < 4) return null;
+  // Take first significant word (drop directionals like "Nord", "Sud", etc.)
+  const word = clean.split(/\s+/).find(w =>
+    w.length >= 4 && !/^(NORD|SUD|EST|OUEST|HAUT|BAS|GRAND|PETIT|VIEUX|VIEILLE)$/i.test(w)
+  );
+  if (!word || word.length < 4) return null;
+  // Normalize accents
+  return word.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]/g, "");
+}
+
+function pickBestSirene(results: any[]): {nom:string;source:string;entreprise:string} | null {
+  // 1. Prefer real estate activity codes (68.x)
+  const realEstate = results.find(r => (r.siege?.activite_principale || "").startsWith("68"));
+  // 2. Prefer SCI/SARL/foncière by name
+  const sci = results.find(r => {
+    const n = (r.nom_complet || r.nom_raison_sociale || "").toUpperCase();
+    return n.includes("SCI") || n.includes("SARL") || n.includes("SAS") || n.includes("FONCIERE") || n.includes("IMMOB");
+  });
+  // 3. Any result with dirigeants
+  const withDir = results.find(r => (r.dirigeants || []).length > 0);
+
+  for (const target of [realEstate, sci, withDir].filter(Boolean)) {
+    if (!target) continue;
+    const dgs: any[] = target.dirigeants || [];
+    if (dgs.length > 0) {
+      const d = dgs[0];
+      const nom = [d.nom, d.prenoms].filter(Boolean).join(" ").trim();
+      const isRealEstate = (target.siege?.activite_principale || "").startsWith("68");
+      return { nom, source: isRealEstate ? "sci+dirigeant" : "sirene+dirigeant", entreprise: target.nom_complet || "" };
+    }
+    const nomEnt = (target.nom_complet || "").split("(")[0].trim();
+    if (nomEnt) return { nom: nomEnt, source: "sci", entreprise: nomEnt };
+  }
+  return null;
+}
+
 async function sireneOwner(_lat: number, _lng: number, adresse: string): Promise<{nom:string;source:string;entreprise:string}|null> {
   try {
-    // No activity filter — SCIs can be 68.20A, 68.32A, 68.10A, or even 96.x (family holding)
-    const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(adresse)}&page=1&per_page=10`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const results: any[] = data.results || [];
-
-    // 1. Prefer real estate activity codes (68.x)
-    const realEstate = results.find(r => {
-      const ap: string = r.siege?.activite_principale || r.activite_principale || "";
-      return ap.startsWith("68");
-    });
-    // 2. Prefer SCI/SARL/foncière by name
-    const sci = results.find(r => {
-      const n = (r.nom_complet || r.nom_raison_sociale || "").toUpperCase();
-      return n.includes("SCI") || n.includes("SARL") || n.includes("SAS") || n.includes("FONCIERE") || n.includes("IMMOB");
-    });
-    // 3. Any result with dirigeants
-    const withDir = results.find(r => (r.dirigeants || []).length > 0);
-
-    for (const target of [realEstate, sci, withDir].filter(Boolean)) {
-      if (!target) continue;
-      const dgs: any[] = target.dirigeants || [];
-      if (dgs.length > 0) {
-        const d = dgs[0];
-        const nom = [d.nom, d.prenoms].filter(Boolean).join(" ").trim();
-        const isRealEstate = (target.siege?.activite_principale || "").startsWith("68");
-        return { nom, source: isRealEstate ? "sci+dirigeant" : "sirene+dirigeant", entreprise: target.nom_complet || "" };
-      }
-      // Company without dirigeants in API response — return company name as owner
-      const nomEnt = (target.nom_complet || "").split("(")[0].trim();
-      if (nomEnt) return { nom: nomEnt, source: "sci", entreprise: nomEnt };
+    // Pass 1: exact address search (works for urban properties with street number)
+    const url1 = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(adresse)}&page=1&per_page=10`;
+    const res1 = await fetch(url1, { signal: AbortSignal.timeout(8000) });
+    if (res1.ok) {
+      const d1 = await res1.json();
+      const pick = pickBestSirene(d1.results || []);
+      if (pick) return pick;
     }
-    return null;
+
+    // Pass 2: locality keyword + postal code (works for rural/luxury areas with lieu-dit)
+    // Extract postal code from address
+    const cpMatch = adresse.match(/\b(\d{5})\b/);
+    const cp = cpMatch?.[1];
+    const keyword = extractLocalityKeyword(adresse);
+    if (!keyword || !cp) return null;
+
+    const q2 = `${keyword} ${cp}`;
+    const url2 = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(q2)}&page=1&per_page=10`;
+    const res2 = await fetch(url2, { signal: AbortSignal.timeout(8000) });
+    if (!res2.ok) return null;
+    const d2 = await res2.json();
+    return pickBestSirene(d2.results || []);
   } catch { return null; }
 }
 
