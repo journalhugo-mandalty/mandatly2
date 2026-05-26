@@ -19,17 +19,30 @@ async function getIGNParcels(lat: number, lng: number): Promise<any[]> {
   } catch { return []; }
 }
 
+function getRing(feature: any): number[][] {
+  const geom = feature.geometry;
+  if (!geom) return [];
+  if (geom.type === "Polygon") return geom.coordinates?.[0] ?? [];
+  if (geom.type === "MultiPolygon") return geom.coordinates?.[0]?.[0] ?? [];
+  return [];
+}
+
 function parcelBbox(feature: any): string | null {
-  const ring = feature.geometry?.coordinates?.[0];
-  if (!ring || ring.length < 3) return null;
+  const ring = getRing(feature);
+  if (ring.length < 3) return null;
   const lngs = ring.map((c: number[]) => c[0]);
   const lats = ring.map((c: number[]) => c[1]);
-  return `${Math.min(...lngs)},${Math.min(...lats)},${Math.max(...lngs)},${Math.max(...lats)}`;
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  // Padding minimum ~120m pour avoir un contexte visuel exploitable
+  const padLng = Math.max((maxLng - minLng) * 0.4, 0.0010);
+  const padLat = Math.max((maxLat - minLat) * 0.4, 0.0007);
+  return `${minLng-padLng},${minLat-padLat},${maxLng+padLng},${maxLat+padLat}`;
 }
 
 function parcelCenter(feature: any): [number,number] | null {
-  const ring = feature.geometry?.coordinates?.[0];
-  if (!ring || ring.length < 3) return null;
+  const ring = getRing(feature);
+  if (ring.length < 3) return null;
   const lngs = ring.map((c: number[]) => c[0]);
   const lats = ring.map((c: number[]) => c[1]);
   return [
