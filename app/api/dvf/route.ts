@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 const COL = {
   date: 1, nature: 3, valeur: 4, num: 5, voie: 7,
   commune: 11, type_local: 30, surface: 31,
-  lng: 38, lat: 39,
+  pieces: 32, terrain: 37, lng: 38, lat: 39,
 };
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -39,6 +39,8 @@ function parseCSV(text: string): any[] {
       nom_commune: c[COL.commune] || "",
       type_local: type,
       surface_reelle_bati: parseFloat(c[COL.surface]) || 0,
+      nombre_pieces: parseFloat(c[COL.pieces]) || 0,
+      surface_terrain: parseFloat(c[COL.terrain]) || 0,
       longitude: lng,
       latitude: lat,
     });
@@ -170,9 +172,16 @@ export async function GET(req: NextRequest) {
       const surface = t.surface_reelle_bati || 0;
       const valeur = t.valeur_fonciere || 0;
       const prixM2 = surface > 0 ? Math.round(valeur / surface) : 0;
+      const terrain = t.surface_terrain || 0;
+      const pieces = t.nombre_pieces || 0;
       // Exclure les transactions commerciales déguisées (prix/m² irréaliste ou valeur trop élevée)
       if (prixM2 > 20000 || valeur > 4000000) continue;
       const isMaison = t.type_local === "Maison";
+
+      const notesParts = [`Acquis ${annee}`, `${surface||"?"}m²`];
+      if (pieces > 0) notesParts.push(`${pieces}p`);
+      if (isMaison && terrain > 0) notesParts.push(`terrain ${terrain}m²`);
+      if (prixM2 > 0) notesParts.push(`${prixM2.toLocaleString("fr-FR")}€/m²`);
 
       // Raw signal: composite of value signals for percentile scoring
       const rawSignal = valeur * 0.5 + surface * 800 + prixM2 * 60 + (isMaison ? 80000 : 0);
@@ -183,11 +192,15 @@ export async function GET(req: NextRequest) {
         adresse,
         ville: t.nom_commune || nomVille,
         source: "DVF",
-        notes: `Acquis ${annee} · ${surface||"?"}m²${prixM2>0?" · "+prixM2.toLocaleString("fr-FR")+"€/m²":""} · ${Math.round(valeur/1000)}k€`,
+        notes: notesParts.join(" · "),
         lat: t.latitude,
         lng: t.longitude,
         anciennete: currentYear - annee,
         prix_achat: valeur,
+        type_local: t.type_local,
+        surface,
+        terrain,
+        pieces,
         _signal: rawSignal,
       });
     }
