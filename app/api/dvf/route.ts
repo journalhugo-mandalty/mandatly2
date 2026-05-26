@@ -183,8 +183,13 @@ export async function GET(req: NextRequest) {
       if (isMaison && terrain > 0) notesParts.push(`terrain ${terrain}m²`);
       if (prixM2 > 0) notesParts.push(`${prixM2.toLocaleString("fr-FR")}€/m²`);
 
-      // Raw signal: composite of value signals for percentile scoring
-      const rawSignal = valeur * 0.5 + surface * 800 + prixM2 * 60 + (isMaison ? 80000 : 0);
+      // Raw signal: ancienneté = multiplicateur dominant (sweet spot 7-16 ans)
+      const anciennete = currentYear - annee;
+      const ancBonus = anciennete >= 7 && anciennete <= 16 ? 2.2
+        : anciennete >= 4 ? 0.7
+        : anciennete < 4 ? 0.08   // tout juste acheté — pas vendeur
+        : 1.0;
+      const rawSignal = (valeur * 0.5 + surface * 800 + prixM2 * 60 + (isMaison ? 80000 : 0)) * ancBonus;
       const rawId = `${t.adresse_numero}${t.adresse_nom_voie}${t.date_mutation?.slice(0,7)||""}`;
 
       raw.push({
@@ -195,7 +200,7 @@ export async function GET(req: NextRequest) {
         notes: notesParts.join(" · "),
         lat: t.latitude,
         lng: t.longitude,
-        anciennete: currentYear - annee,
+        anciennete,
         prix_achat: valeur,
         type_local: t.type_local,
         surface,
