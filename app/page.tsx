@@ -68,14 +68,14 @@ async function lancerEstimation(type: string, surface: number, adresse: string, 
 type CrmStatus = "nouveau"|"courrier_pret"|"envoye"|"relance_prevue"|"interesse"|"estimation"|"mandat"|"perdu";
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; signature_request_id?:string; signature_status?:string; };
 type SignatureState = { loading:boolean; url?:string; error?:string; sandbox?:boolean; };
-type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; type_local?:string; surface?:number; terrain?:number; pieces?:number; crm_status?:CrmStatus; };
+type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; type_local?:string; surface?:number; terrain?:number; pieces?:number; crm_status?:CrmStatus; classe_dpe?:string; };
 
 // Standalone letter generator (no API, no AI required)
 function generateLetter(p: Prospect, template: string, ag: {prenom:string;nom:string;agence:string}): string {
   const t = p.type_local || (p.source==="DPE"?"bien":"propriété");
   const sc = p.surface ? ` de ${p.surface} m²` : "";
   const tc = p.terrain && p.terrain>0 ? ` avec ${p.terrain} m² de terrain` : "";
-  const sal = p.proprietaire_nom ? `${p.proprietaire_nom},` : "Madame, Monsieur,";
+  const sal = p.proprietaire_nom ? `Madame, Monsieur ${p.proprietaire_nom},` : "Madame, Monsieur,";
   const sign = `Cordialement,\n${ag.prenom} ${ag.nom}\nAgent immobilier — ${ag.agence}`;
   if(template==="relance") return `${sal}\n\nJe me permets de revenir vers vous suite à mon précédent courrier concernant votre ${t.toLowerCase()} au ${p.adresse}.\n\nNotre acquéreur est toujours très motivé par ce secteur et l'opportunité reste entière. Je reste disponible pour un échange sans obligation.\n\n${sign}`;
   if(template==="offre") return `${sal}\n\nNous représentons un acquéreur sérieux, financement validé, à la recherche d'un ${t.toLowerCase()}${sc}${tc} dans votre quartier.\n\nVotre bien au ${p.adresse} correspond exactement à ses critères. Cette configuration représente une opportunité rare de conclure rapidement, au juste prix.\n\nNous sommes à votre disposition pour un premier échange confidentiel.\n\n${sign}`;
@@ -222,6 +222,7 @@ export default function App() {
   const [radarLetter, setRadarLetter] = useState("");
   const [radarLetterLoading, setRadarLetterLoading] = useState(false);
   const [radarLetterTemplate, setRadarLetterTemplate] = useState("prospection");
+  const [radarView, setRadarView] = useState<"cards"|"map">("cards");
   // Gamification
   const [courriersSent, setCourriersSent] = useState(()=>{
     if(typeof window==="undefined") return 0;
@@ -337,11 +338,11 @@ export default function App() {
     const terrainCtx = p.terrain && p.terrain>0 ? ` avec ${p.terrain} m² de terrain` : "";
     const ancCtx = p.anciennete ? ` acquis il y a ${p.anciennete} ans` : "";
     const templatePrompts: Record<string,string> = {
-      prospection: `Rédige un courrier de prospection immobilière sobre et professionnel pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx}${ancCtx} au ${p.adresse}, ${p.ville}.${nomCtx} Tu représentes ${agent.prenom} ${agent.nom} de ${agent.agence}. Adopte le ton d'une agence haut de gamme : confiant, direct, sans être agressif. Ne mentionne jamais de DPE ou de données publiques. 3 paragraphes. Commence OBLIGATOIREMENT par "Madame, Monsieur,".`,
-      relance: `Rédige un courrier de relance pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx} au ${p.adresse}, ${p.ville} contacté il y a 3 semaines sans réponse.${nomCtx} Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Ton : bienveillant, sans pression. 2 paragraphes. Commence par "Madame, Monsieur,".`,
-      offre: `Rédige un courrier informant le propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx} au ${p.adresse}, ${p.ville} qu'un acquéreur sérieux avec financement confirmé recherche exactement ce type de bien dans ce secteur.${nomCtx} Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Sobre, crédible. Commence par "Madame, Monsieur,".`,
+      prospection: `Rédige un courrier de prospection immobilière sobre et professionnel pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx}${ancCtx} au ${p.adresse}, ${p.ville}.${nomCtx} Tu représentes ${agent.prenom} ${agent.nom} de ${agent.agence}. Adopte le ton d'une agence haut de gamme : confiant, direct, sans être agressif. Ne mentionne jamais de DPE ou de données publiques. 3 paragraphes. ${p.proprietaire_nom ? `Commence par "Madame, Monsieur ${p.proprietaire_nom}," (salutation personnalisée).` : `Commence par "Madame, Monsieur,".`}`,
+      relance: `Rédige un courrier de relance pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx} au ${p.adresse}, ${p.ville} contacté il y a 3 semaines sans réponse.${nomCtx} Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. Ton : bienveillant, sans pression. 2 paragraphes. ${p.proprietaire_nom ? `Commence par "Madame, Monsieur ${p.proprietaire_nom},".` : `Commence par "Madame, Monsieur,".`}`,
+      offre: `Rédige un courrier informant le propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx} au ${p.adresse}, ${p.ville} qu'un acquéreur sérieux avec financement confirmé recherche exactement ce type de bien dans ce secteur.${nomCtx} Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Sobre, crédible. ${p.proprietaire_nom ? `Commence par "Madame, Monsieur ${p.proprietaire_nom},".` : `Commence par "Madame, Monsieur,".`}`,
     };
-    const salutation = p.proprietaire_nom ? `${p.proprietaire_nom},` : "Madame, Monsieur,";
+    const salutation = p.proprietaire_nom ? `Madame, Monsieur ${p.proprietaire_nom},` : "Madame, Monsieur,";
     const fallback: Record<string,string> = {
       prospection: `${salutation}\n\n${agent.agence} est une agence immobilière reconnue dans le secteur de ${p.ville} et ses alentours. Nous intervenons régulièrement dans votre quartier et connaissons parfaitement les spécificités du marché local.\n\nVotre ${typeLabel.toLowerCase()}${surfaceCtx} au ${p.adresse} retient notre attention. Dans le contexte actuel, nous accompagnons plusieurs acquéreurs sérieux, avec financement confirmé, à la recherche d'un bien de ce type dans ce secteur précis.\n\nNous vous proposons une estimation gratuite, confidentielle et sans engagement. Si vous envisagez une cession dans les mois à venir, il serait dommage de ne pas explorer ensemble cette opportunité.\n\nCordialement,\n${agent.prenom} ${agent.nom}\nAgent immobilier — ${agent.agence}`,
       relance: `${salutation}\n\nJe me permets de revenir vers vous suite à mon précédent courrier concernant votre ${typeLabel.toLowerCase()} au ${p.adresse}.\n\nNotre acheteur est toujours très motivé par ce secteur, et l'opportunité reste entière. Si vous avez eu l'occasion de réfléchir à votre situation, je reste disponible pour un échange sans obligation.\n\nCordialement,\n${agent.prenom} ${agent.nom}\n${agent.agence}`,
@@ -538,9 +539,18 @@ export default function App() {
         if(dpeR.status==="fulfilled"&&!dpeR.value.error) all.push(...(dpeR.value.prospects||[]));
       } catch{}
     }
+    // DPE F/G = contrainte loi Climat → signal de vente fort, remonter en tête
+    const effectiveScore = (p: Prospect) => {
+      let s = p.score;
+      if (p.source === "DPE") {
+        if (p.classe_dpe === "G") s += 25;
+        else if (p.classe_dpe === "F") s += 18;
+      }
+      return s;
+    };
     const sorted = all
       .filter(p=>!radarDone.has(String(p.id)))
-      .sort((a,b)=>b.score-a.score)
+      .sort((a,b)=>effectiveScore(b)-effectiveScore(a))
       .slice(0,60);
     setRadarProspects(sorted);
     setRadarLoading(false);
@@ -579,9 +589,9 @@ export default function App() {
     const ancCtx = p.anciennete ? ` acquis il y a ${p.anciennete} ans` : "";
     const nomCtx = p.proprietaire_nom ? ` Le propriétaire identifié est ${p.proprietaire_nom}.` : "";
     const prompts: Record<string,string> = {
-      prospection: `Rédige un courrier de prospection immobilière sobre et professionnel pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx}${ancCtx} au ${p.adresse}, ${p.ville}.${nomCtx} Tu représentes ${agent.prenom} ${agent.nom} de ${agent.agence}. 3 paragraphes. Commence OBLIGATOIREMENT par "Madame, Monsieur,".`,
-      relance: `Rédige un courrier de relance pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx} au ${p.adresse}, ${p.ville} contacté il y a 3 semaines sans réponse.${nomCtx} Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. 2 paragraphes. Commence par "Madame, Monsieur,".`,
-      offre: `Rédige un courrier informant le propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx} au ${p.adresse}, ${p.ville} qu'un acquéreur sérieux avec financement confirmé recherche ce type de bien.${nomCtx} Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Commence par "Madame, Monsieur,".`,
+      prospection: `Rédige un courrier de prospection immobilière sobre et professionnel pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx}${ancCtx} au ${p.adresse}, ${p.ville}.${nomCtx} Tu représentes ${agent.prenom} ${agent.nom} de ${agent.agence}. 3 paragraphes. ${p.proprietaire_nom ? `Commence par "Madame, Monsieur ${p.proprietaire_nom}," (salutation personnalisée).` : `Commence par "Madame, Monsieur,".`}`,
+      relance: `Rédige un courrier de relance pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx} au ${p.adresse}, ${p.ville} contacté il y a 3 semaines sans réponse.${nomCtx} Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. 2 paragraphes. ${p.proprietaire_nom ? `Commence par "Madame, Monsieur ${p.proprietaire_nom},".` : `Commence par "Madame, Monsieur,".`}`,
+      offre: `Rédige un courrier informant le propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx} au ${p.adresse}, ${p.ville} qu'un acquéreur sérieux avec financement confirmé recherche ce type de bien.${nomCtx} Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. ${p.proprietaire_nom ? `Commence par "Madame, Monsieur ${p.proprietaire_nom},".` : `Commence par "Madame, Monsieur,".`}`,
     };
     try {
       const res = await fetch("/api/claude", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
@@ -824,8 +834,18 @@ export default function App() {
               <div>
                 <div style={{fontSize:11,color:C.gold,fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:6}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</div>
                 <h1 style={{fontFamily:DISPLAY,fontSize:36,fontWeight:400,color:C.text,letterSpacing:"-0.01em",lineHeight:1,fontStyle:"italic"}}>Bonjour, {agent.prenom}</h1>
+                <div style={{fontSize:12,color:C.muted,marginTop:6}}>Radar prospection — DPE F/G et anciens acquéreurs DVF remontés en priorité</div>
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                {radarProspects.length>0&&(
+                  <div style={{display:"flex",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:3,gap:2}}>
+                    {(["cards","map"] as const).map(v=>(
+                      <button key={v} onClick={()=>setRadarView(v)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:radarView===v?C.accent:"transparent",color:radarView===v?(dark?"#080808":"#fff"):C.muted,fontSize:11,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
+                        {v==="cards"?"Fiches":"Carte"}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {streakDays>1&&<div style={{background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.amber}}>🔥 {streakDays} jours</div>}
                 <div style={{background:C.green+"12",border:`1px solid ${C.green}25`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.green}}>{courriersSent} envoyés</div>
                 {courriersSent>0&&<div style={{background:C.blue+"12",border:`1px solid ${C.blue}25`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.blue}}>{taux}% conv.</div>}
@@ -902,9 +922,24 @@ export default function App() {
                 </div>
               </div>
 
-              {/* RIGHT: Opportunity card or empty state */}
+              {/* RIGHT: Opportunity card, map view, or empty state */}
               <div>
-                {!radarProspects.length&&!radarLoading&&(
+                {radarView==="map"&&radarProspects.length>0&&(
+                  <div style={{...card(),overflow:"hidden",height:580}}>
+                    {(()=>{
+                      const firstWithCoords = radarProspects.find(p=>p.lat&&p.lng);
+                      const radarMapCenter:[number,number] = firstWithCoords ? [firstWithCoords.lat as number, firstWithCoords.lng as number] : [46.6,2.3];
+                      return <MapComponent
+                        prospects={radarProspects.filter(p=>p.lat&&p.lng) as any}
+                        center={radarMapCenter}
+                        dark={dark}
+                        onSelect={(p:any)=>{const idx=radarProspects.findIndex(x=>x.id===p.id);if(idx>=0){setRadarIdx(idx);setRadarView("cards");generateRadarLetterFn(radarProspects[idx],radarLetterTemplate);}}}
+                        satellite={true}
+                      />;
+                    })()}
+                  </div>
+                )}
+                {radarView==="cards"&&!radarProspects.length&&!radarLoading&&(
                   <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
                     <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:12,fontStyle:"italic"}}>Votre radar de prospection</div>
                     <div style={{fontSize:14,color:C.muted,marginBottom:24,lineHeight:1.6}}>Configurez vos villes cibles et lancez le radar.<br/>Le système détecte automatiquement les meilleures<br/>opportunités et prépare les courriers.</div>
@@ -922,7 +957,7 @@ export default function App() {
                     )}
                   </div>
                 )}
-                {radarCurrent&&(
+                {radarView==="cards"&&radarCurrent&&(
                   <div style={{...card(),padding:"32px 36px",animation:"fadeUp 0.2s ease"}}>
                     {/* Score + source */}
                     <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20}}>
@@ -931,6 +966,11 @@ export default function App() {
                           {(()=>{const col=radarCurrent.score>=85?C.green:radarCurrent.score>=70?C.amber:C.red;return<div style={{fontSize:28,fontWeight:800,color:col,lineHeight:1,fontFamily:DISPLAY}}>{radarCurrent.score}</div>;})()}
                           <div style={{display:"flex",flexDirection:"column",gap:3}}>
                             <span style={{fontSize:9,fontWeight:600,color:radarCurrent.source==="DPE"?C.amber:C.blue,background:(radarCurrent.source==="DPE"?C.amber:C.blue)+"15",border:`1px solid ${(radarCurrent.source==="DPE"?C.amber:C.blue)}30`,borderRadius:3,padding:"1px 5px",letterSpacing:"0.08em"}}>{radarCurrent.source}</span>
+                            {radarCurrent.source==="DPE"&&radarCurrent.classe_dpe&&(
+                              <span style={{fontSize:9,fontWeight:700,color:radarCurrent.classe_dpe==="G"?"#EF4444":radarCurrent.classe_dpe==="F"?"#F97316":"#F59E0B",background:(radarCurrent.classe_dpe==="G"?"#EF4444":radarCurrent.classe_dpe==="F"?"#F97316":"#F59E0B")+"20",border:`1px solid ${radarCurrent.classe_dpe==="G"?"#EF4444":radarCurrent.classe_dpe==="F"?"#F97316":"#F59E0B"}40`,borderRadius:3,padding:"1px 5px",letterSpacing:"0.08em"}}>
+                                DPE {radarCurrent.classe_dpe} {(radarCurrent.classe_dpe==="G"||radarCurrent.classe_dpe==="F")?"· Vente probable":""}
+                              </span>
+                            )}
                             {radarCurrent.proprietaire_nom&&<span style={{fontSize:9,fontWeight:600,color:C.gold,background:C.gold+"15",border:`1px solid ${C.gold}30`,borderRadius:3,padding:"1px 5px"}}>Propriétaire identifié</span>}
                           </div>
                         </div>
