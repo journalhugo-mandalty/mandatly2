@@ -157,6 +157,8 @@ export default function App() {
   const [banSugg, setBanSugg] = useState<{city:string;citycode:string;dept:string}[]>([]);
   const [showSugg, setShowSugg] = useState(false);
   const banDebounce = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const [prospFilter, setProspFilter] = useState<"tous"|"dpe-recent"|"dpe-fg"|"dvf"|"contactes">("tous");
+  const [prospCrm, setProspCrm] = useState<Record<string,"contacte"|"repondu"|"sans_suite">>({});
   const [profile, setProfile] = useState(false);
   // Estimation
   const [estForm, setEstForm] = useState({type:"Maison",surface:"",adresse:"",etat:"bon"});
@@ -1148,58 +1150,45 @@ export default function App() {
                   )}
                 </div>
                 {dvfError&&<div style={{fontSize:12,color:C.red,marginBottom:6}}>{dvfError}</div>}
-                {/* Per-source status */}
-                {(dvfLoading||dvfStats)&&(
-                  <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
-                    {[
-                      {id:"dvf",label:"DVF",count:dvfStats?.dvf,desc:"transactions"},
-                      {id:"dpe",label:"DPE",count:dvfStats?.dpe,desc:"signaux vente"},
-                      {id:"enrichir",label:"Sirene",count:null,desc:"propriétaires"},
-                    ].map(s=>{
-                      const st = srcStatus[s.id as keyof typeof srcStatus];
-                      const col = st==="ok"?C.green:st==="loading"?C.amber:st==="err"?C.red:C.border;
-                      return(
-                        <div key={s.id} style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${col}40`,borderRadius:6,padding:"3px 8px",display:"flex",alignItems:"center",gap:4}}>
-                          <div style={{width:5,height:5,borderRadius:"50%",background:col,flexShrink:0,animation:st==="loading"?"pulse 1.2s infinite":"none"}}/>
-                          {st==="ok"&&s.count!=null?<><span style={{fontWeight:600,color:C.text}}>{s.count}</span>{" "}</>:null}
-                          <span>{s.label}</span>
-                        </div>
-                      );
-                    })}
-                    {dvfStats&&<div style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px"}}><span style={{fontWeight:600,color:C.text}}>{prospects.length}</span> total</div>}
+                {/* Stats chargement */}
+                {dvfLoading&&(
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {["DPE","DVF","Sirene"].map(l=>(
+                      <div key={l} style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.amber}40`,borderRadius:6,padding:"3px 8px",display:"flex",alignItems:"center",gap:4}}>
+                        <div style={{width:5,height:5,borderRadius:"50%",background:C.amber,animation:"pulse 1.2s infinite"}}/>
+                        {l}
+                      </div>
+                    ))}
                   </div>
                 )}
-                {/* Quick-select (après chargement) */}
+                {/* Stats résultat + filtre */}
                 {prospects.length>0&&(()=>{
-                  const dpeRecents = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)<=180);
-                  const dpeFGAnciens = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)>180);
-                  const dvfTop20 = prospects.filter(p=>p.source!=="DPE").slice(0,20);
-                  const withNames = prospects.filter(p=>p.proprietaire_nom).length;
+                  const nDpeR = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)<=180).length;
+                  const nDpeFG = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)>180).length;
+                  const nDvf = prospects.filter(p=>p.source!=="DPE").length;
+                  const nNoms = prospects.filter(p=>p.proprietaire_nom).length;
+                  const nContact = Object.keys(prospCrm).filter(k=>prospects.find(p=>String(p.id)===k)).length;
                   return(
                     <div>
-                      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}}>
-                        {dpeRecents.length>0&&(
-                          <button onClick={()=>setSelProspects(new Set(dpeRecents.map(p=>p.id)))} style={{padding:"4px 9px",background:"#F97316"+"20",color:"#F97316",border:`1px solid #F9731640`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
-                            DPE &lt;6 mois ({dpeRecents.length}) — Vente imminente
-                          </button>
-                        )}
-                        {dpeFGAnciens.length>0&&(
-                          <button onClick={()=>setSelProspects(new Set(dpeFGAnciens.map(p=>p.id)))} style={{padding:"4px 9px",background:C.amber+"18",color:C.amber,border:`1px solid ${C.amber}35`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
-                            DPE F/G ({dpeFGAnciens.length}) — Obligation légale
-                          </button>
-                        )}
-                        <button onClick={()=>setSelProspects(new Set(dvfTop20.map(p=>p.id)))} style={{padding:"4px 9px",background:C.blue+"15",color:C.blue,border:`1px solid ${C.blue}30`,borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer"}}>
-                          Top 20 DVF
-                        </button>
-                        {selProspects.size>0&&(
-                          <button onClick={()=>setSelProspects(new Set())} style={{padding:"4px 9px",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,fontSize:11,cursor:"pointer"}}>
-                            Effacer
-                          </button>
-                        )}
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+                        {nDpeR>0&&<div style={{fontSize:11,fontWeight:600,color:"#F97316",background:"#F9731615",border:"1px solid #F9731630",borderRadius:5,padding:"2px 7px"}}>{nDpeR} DPE récents</div>}
+                        {nDpeFG>0&&<div style={{fontSize:11,fontWeight:600,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:5,padding:"2px 7px"}}>{nDpeFG} DPE F/G</div>}
+                        {nDvf>0&&<div style={{fontSize:11,fontWeight:600,color:C.blue,background:C.blue+"12",border:`1px solid ${C.blue}25`,borderRadius:5,padding:"2px 7px"}}>{nDvf} DVF</div>}
+                        {nNoms>0&&<div style={{fontSize:11,fontWeight:600,color:C.gold,background:C.gold+"12",border:`1px solid ${C.gold}25`,borderRadius:5,padding:"2px 7px"}}>{nNoms} noms</div>}
                       </div>
-                      <div style={{fontSize:10,color:C.muted,lineHeight:1.4}}>
-                        {withNames>0?<><span style={{color:C.gold,fontWeight:600}}>{withNames} noms trouvés</span> (SCI/entreprises) · </>:null}
-                        Pas de nom = courrier en "Madame, Monsieur" — fonctionne très bien
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                        {([
+                          ["tous","Tous",prospects.length],
+                          ["dpe-recent","DPE récents",nDpeR],
+                          ["dpe-fg","DPE F/G",nDpeFG],
+                          ["dvf","DVF",nDvf],
+                          ["contactes","Contactés",nContact],
+                        ] as [string,string,number][]).map(([id,label,count])=>(count>0||id==="tous")&&(
+                          <button key={id} onClick={()=>setProspFilter(id as any)}
+                            style={{padding:"3px 9px",borderRadius:20,border:`1px solid ${prospFilter===id?C.accent:C.border}`,background:prospFilter===id?C.accent+"20":"transparent",color:prospFilter===id?C.accent:C.muted,fontSize:11,fontWeight:prospFilter===id?600:400,cursor:"pointer",transition:"all 0.12s"}}>
+                            {label}{count>0&&id!=="tous"?` · ${count}`:""}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   );
@@ -1265,72 +1254,149 @@ export default function App() {
                 </div>
               )}
 
-              {/* Prospects list groupée */}
+              {/* Prospects list */}
               <div style={{flex:1,overflowY:"auto"}}>
                 {prospects.length===0?(
-                  <div style={{padding:28,textAlign:"center",color:C.muted}}>
-                    <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:400,fontStyle:"italic",marginBottom:10,color:C.text}}>Comment ça marche</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:8,textAlign:"left",maxWidth:260,margin:"0 auto"}}>
-                      {[
-                        ["1. Rechercher","Entrez une ville ou un code postal"],
-                        ["2. Sélectionner","Cliquez 'DPE F/G' ou 'Top 20 DVF' — ce sont les plus susceptibles de vendre"],
-                        ["3. Envoyer","Merci Facteur poste les lettres physiques (1,50€/lettre, sans vous déplacer)"],
-                        ["4. Suivre","Onglet Courriers — marquez les réponses et déclenchez les relances"],
-                      ].map(([t,d])=>(
-                        <div key={t} style={{padding:"8px 10px",background:C.card,border:`1px solid ${C.border}`,borderRadius:7}}>
-                          <div style={{fontSize:11,fontWeight:600,color:C.accent,marginBottom:2}}>{t}</div>
-                          <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>{d}</div>
+                  <div style={{padding:28,color:C.muted}}>
+                    <div style={{fontFamily:DISPLAY,fontSize:17,fontWeight:400,fontStyle:"italic",marginBottom:14,color:C.text}}>Comment prospecter</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {([
+                        ["#F97316","DPE récents","Un propriétaire qui réalise un DPE prépare une vente. C'est obligatoire avant toute mise en vente. Signal le plus fort."],
+                        [C.amber,"DPE F/G","La loi Climat 2025-2028 interdit la location des passoires thermiques. Ces propriétaires sont contraints de rénover ou vendre."],
+                        [C.blue,"DVF anciens","Transactions passées. Plus l'achat est ancien, plus la revente est probable. Signal complémentaire."],
+                      ] as [string,string,string][]).map(([col,titre,desc])=>(
+                        <div key={titre} style={{padding:"10px 12px",background:C.card,border:`1px solid ${col}30`,borderLeft:`3px solid ${col}`,borderRadius:7}}>
+                          <div style={{fontSize:12,fontWeight:600,color:col,marginBottom:3}}>{titre}</div>
+                          <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>{desc}</div>
                         </div>
                       ))}
+                      <div style={{fontSize:10,color:C.muted,marginTop:4,lineHeight:1.5}}>
+                        Tapez une ville ci-dessus pour charger les prospects. Les noms de propriétaires sont recherchés automatiquement (SCI et entreprises uniquement — ~15% des cas).
+                      </div>
                     </div>
-                    <div style={{fontSize:10,color:C.muted,marginTop:16}}>DVF = transactions passées · DPE = diagnostics énergétiques F/G</div>
                   </div>
                 ):(()=>{
-                  const dpeRecents = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)<=180);
-                  const dpeFGAnciens = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)>180);
-                  const dvfList = prospects.filter(p=>p.source!=="DPE");
+                  const allDpeRecents = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)<=180);
+                  const allDpeFGAnciens = prospects.filter(p=>p.source==="DPE"&&(p.age_jours??999)>180);
+                  const allDvfList = prospects.filter(p=>p.source!=="DPE");
+
+                  const filtered = prospFilter==="dpe-recent" ? allDpeRecents
+                    : prospFilter==="dpe-fg" ? allDpeFGAnciens
+                    : prospFilter==="dvf" ? allDvfList
+                    : prospFilter==="contactes" ? prospects.filter(p=>!!prospCrm[String(p.id)])
+                    : prospects;
+
                   const renderRow = (p: Prospect) => {
-                    const col = p.score>=85?C.green:p.score>=70?C.amber:C.red;
                     const isSel = selProspects.has(p.id);
                     const isActive = selProspect?.id===p.id;
-                    const isDpe = p.source==="DPE";
-                    const srcColor = isDpe?C.amber:C.blue;
-                    const srcLabel = isDpe?`DPE${(p as any).classe_dpe?" "+(p as any).classe_dpe:""}`:p.proprietaire_source==="vision-ia"?"Vision IA":"DVF";
+                    const isDpeRecent = p.source==="DPE"&&(p.age_jours??999)<=180;
+                    const isDpeFG = p.source==="DPE"&&(p.age_jours??999)>180;
+                    const sigCol = isDpeRecent?"#F97316":isDpeFG?C.amber:C.blue;
+                    const crmSt = prospCrm[String(p.id)];
+                    const crmDot = crmSt==="repondu"?C.green:crmSt==="contacte"?C.amber:crmSt==="sans_suite"?C.muted:null;
+
+                    // Signal explication en français clair
+                    const age = p.age_jours??0;
+                    const sigExplain = isDpeRecent
+                      ? `DPE réalisé il y a ${age<30?age+"j":Math.round(age/30)+(age<60?" mois":" mois")} — prépare une vente`
+                      : isDpeFG
+                      ? `DPE classe ${p.classe_dpe} — obligation légale de rénover ou vendre`
+                      : `Acheté en ${new Date().getFullYear()-(p.anciennete||0)} · ${p.anciennete||"?"} ans de détention`;
+
+                    const sigBadge = isDpeRecent
+                      ? `DPE ${age<30?"< 1 mois":age<90?"< 3 mois":"< 6 mois"}`
+                      : isDpeFG ? `DPE ${p.classe_dpe||"F/G"}`
+                      : `DVF ${new Date().getFullYear()-(p.anciennete||0)}`;
+
+                    const metaLine = [
+                      p.surface?`${p.surface}m²`:"",
+                      p.type_local||(p.source==="DPE"?"":""),
+                      p.pieces?`${p.pieces}p`:"",
+                    ].filter(Boolean).join(" · ");
+
                     return(
-                      <div key={p.id} id={"prospect-"+p.id} onClick={()=>{
-                        setSelProspect(isActive?null:p);
-                        if(!isActive && (p as any).lat && (p as any).lng) setMapFlyTo({lat:(p as any).lat,lng:(p as any).lng,zoom:17,key:Date.now()});
-                      }} style={{padding:"9px 14px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:isActive?C.accentBg:isSel?C.gold+"10":"transparent",transition:"background 0.15s"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          <div onClick={e=>{e.stopPropagation();setSelProspects(s=>{const n=new Set(s);isSel?n.delete(p.id):n.add(p.id);return n;})}} style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${isSel?C.gold:C.border}`,background:isSel?C.gold:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all 0.15s"}}>
+                      <div key={p.id} id={"prospect-"+p.id}
+                        onClick={()=>{
+                          setSelProspect(isActive?null:p);
+                          if(!isActive&&p.lat&&p.lng) setMapFlyTo({lat:p.lat,lng:p.lng,zoom:17,key:Date.now()});
+                        }}
+                        style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,cursor:"pointer",background:isActive?C.accentBg:isSel?C.gold+"10":"transparent",transition:"background 0.15s",borderLeft:`3px solid ${isActive?C.accent:isSel?C.gold:sigCol}40`}}>
+
+                        {/* Ligne 1 : checkbox + badge signal + statut CRM */}
+                        <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
+                          <div onClick={e=>{e.stopPropagation();setSelProspects(s=>{const n=new Set(s);isSel?n.delete(p.id):n.add(p.id);return n;})}}
+                            style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${isSel?C.gold:C.border}`,background:isSel?C.gold:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",transition:"all 0.15s"}}>
                             {isSel&&<div style={{width:6,height:6,borderRadius:1,background:"#fff"}}/>}
                           </div>
-                          <div style={{width:28,height:28,borderRadius:6,background:col+"15",border:`1px solid ${col}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
-                            <div style={{display:"flex",alignItems:"center",gap:4,marginTop:1,flexWrap:"wrap"}}>
-                              {p.proprietaire_chargement?(
-                                <span style={{fontSize:10,color:C.muted,fontStyle:"italic",animation:"pulse 1.5s infinite"}}>recherche nom...</span>
-                              ):p.proprietaire_nom?(
-                                <span style={{fontSize:11,fontWeight:700,color:C.gold}}>{p.proprietaire_nom}</span>
-                              ):(
-                                <span style={{fontSize:10,color:C.muted}}>{p.ville}</span>
-                              )}
-                              <span style={{fontSize:9,background:srcColor+"18",color:srcColor,border:`1px solid ${srcColor}35`,borderRadius:3,padding:"0 4px",fontWeight:600,lineHeight:"16px",flexShrink:0}}>{srcLabel}</span>
-                              {p.proprietaire_nom&&p.proprietaire_source&&p.proprietaire_source!=="inconnu"&&(
-                                <span style={{fontSize:9,background:C.green+"10",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"0 4px",fontWeight:600,lineHeight:"16px"}}>
-                                  {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="vision-ia"?"Vision IA":p.proprietaire_source==="bodacc"?"BODACC":"Sirene"}
-                                </span>
-                              )}
+                          <span style={{fontSize:10,fontWeight:700,color:sigCol,background:sigCol+"18",border:`1px solid ${sigCol}35`,borderRadius:4,padding:"1px 6px",letterSpacing:"0.04em"}}>{sigBadge}</span>
+                          {crmDot&&<div title={crmSt==="repondu"?"Répondu":crmSt==="contacte"?"Contacté":"Sans suite"} style={{width:7,height:7,borderRadius:"50%",background:crmDot,marginLeft:"auto",flexShrink:0}}/>}
+                        </div>
+
+                        {/* Ligne 2 : adresse */}
+                        <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:2,paddingLeft:21,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
+
+                        {/* Ligne 3 : explication signal */}
+                        <div style={{fontSize:11,color:C.muted,paddingLeft:21,marginBottom:3,lineHeight:1.4}}>{sigExplain}</div>
+
+                        {/* Ligne 4 : propriétaire + meta */}
+                        <div style={{display:"flex",alignItems:"center",gap:5,paddingLeft:21,flexWrap:"wrap"}}>
+                          {p.proprietaire_chargement?(
+                            <span style={{fontSize:10,color:C.muted,fontStyle:"italic",animation:"pulse 1.5s infinite"}}>recherche propriétaire...</span>
+                          ):p.proprietaire_nom?(
+                            <span style={{fontSize:11,fontWeight:700,color:C.gold}}>{p.proprietaire_nom}</span>
+                          ):null}
+                          {metaLine&&<span style={{fontSize:10,color:C.muted}}>{metaLine}</span>}
+                          {p.proprietaire_nom&&p.proprietaire_source&&p.proprietaire_source!=="inconnu"&&(
+                            <span style={{fontSize:9,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:3,padding:"0 4px",lineHeight:"16px"}}>
+                              {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="vision-ia"?"Vision IA":"Sirene"}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Ligne 5 : actions quand sélectionné */}
+                        {isActive&&(
+                          <div style={{marginTop:8,paddingLeft:21,display:"flex",gap:5,flexWrap:"wrap"}}>
+                            <button onClick={e=>{e.stopPropagation();setSelProspect(p);}}
+                              style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                              Courrier
+                            </button>
+                            {p.lat&&p.lng&&(
+                              <button onClick={e=>{e.stopPropagation();setSvModal({lat:p.lat as number,lng:p.lng as number,adresse:p.adresse});}}
+                                style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>
+                                Street View
+                              </button>
+                            )}
+                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse ce prospect : ${p.adresse}, ${p.ville}. ${sigExplain}. ${p.proprietaire_nom?"Propriétaire : "+p.proprietaire_nom+". ":""}Recommande une stratégie d'approche.`}]);}}
+                              style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>
+                              Lucas
+                            </button>
+                            {p.lat&&p.lng&&!propData[String(p.id)]&&(
+                              <button onClick={async e=>{
+                                e.stopPropagation();
+                                const key=String(p.id); setPropLoading(key);
+                                try{
+                                  const r=await fetch(`/api/proprietaire?lat=${p.lat}&lng=${p.lng}&adresse=${encodeURIComponent(p.adresse+" "+p.ville)}`);
+                                  const d=await r.json();
+                                  setPropData(x=>({...x,[key]:d}));
+                                }catch{}
+                                setPropLoading(null);
+                              }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.text,cursor:"pointer"}}>
+                                {propLoading===String(p.id)?"...":"Cadastre"}
+                              </button>
+                            )}
+                            {/* CRM status */}
+                            <div style={{display:"flex",gap:3,marginLeft:"auto"}}>
+                              {([["contacte","Contacté",C.amber],["repondu","Répondu",C.green],["sans_suite","Sans suite",C.muted]] as [string,string,string][]).map(([st,lbl,col])=>(
+                                <button key={st} onClick={e=>{e.stopPropagation();setProspCrm(s=>({...s,[String(p.id)]:s[String(p.id)]===st?undefined as any:st as any}));}}
+                                  style={{background:prospCrm[String(p.id)]===st?col+"25":"transparent",color:prospCrm[String(p.id)]===st?col:C.muted,border:`1px solid ${prospCrm[String(p.id)]===st?col:C.border}`,borderRadius:5,padding:"3px 7px",fontSize:10,cursor:"pointer",fontWeight:prospCrm[String(p.id)]===st?600:400}}>
+                                  {lbl}
+                                </button>
+                              ))}
                             </div>
                           </div>
-                          <button onClick={e=>{e.stopPropagation();setSelProspect(p);}} title="Générer courrier" style={{flexShrink:0,background:isActive?C.accent:C.card,color:isActive?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${isActive?C.accent:C.border}`,borderRadius:6,padding:"4px 8px",fontSize:10,fontWeight:600,cursor:"pointer",transition:"all 0.15s",whiteSpace:"nowrap"}}>
-                            Courrier
-                          </button>
-                        </div>
-                        <div style={{fontSize:10,color:C.muted,marginTop:3,marginLeft:22,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.notes}</div>
+                        )}
                         {isActive&&propData[String(p.id)]&&(
-                          <div style={{marginTop:6,marginLeft:22,padding:"6px 10px",background:C.card,borderRadius:6,border:`1px solid ${C.border}`}}>
+                          <div style={{marginTop:6,marginLeft:21,padding:"6px 10px",background:C.card,borderRadius:6,border:`1px solid ${C.border}`}}>
                             {propData[String(p.id)].parcelles?.length>0&&(
                               <div style={{marginBottom:3,fontSize:11,color:C.text}}>
                                 <span style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",marginRight:4}}>Cadastre</span>
@@ -1346,58 +1412,51 @@ export default function App() {
                             )}
                           </div>
                         )}
-                        {isActive&&(
-                          <div style={{marginTop:6,marginLeft:22,display:"flex",gap:5}}>
-                            {(p as any).lat&&(p as any).lng&&(
-                              <button onClick={e=>{e.stopPropagation();setSvModal({lat:(p as any).lat,lng:(p as any).lng,adresse:p.adresse});}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px",fontSize:10,color:C.text,cursor:"pointer"}}>Street View</button>
-                            )}
-                            <button onClick={e=>{e.stopPropagation();setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse le prospect au ${p.adresse}${p.proprietaire_nom?" — propriétaire : "+p.proprietaire_nom:""}. Score ${p.score}/100. ${p.notes}. Recommande une stratégie.`}]);}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px",fontSize:10,color:C.text,cursor:"pointer"}}>Lucas</button>
-                            {(p as any).lat&&(p as any).lng&&!propData[String(p.id)]&&(
-                              <button onClick={async e=>{
-                                e.stopPropagation();
-                                const key=String(p.id); setPropLoading(key);
-                                try{
-                                  const r=await fetch(`/api/proprietaire?lat=${(p as any).lat}&lng=${(p as any).lng}&adresse=${encodeURIComponent(p.adresse+" "+p.ville)}`);
-                                  const d=await r.json();
-                                  setPropData(x=>({...x,[key]:d}));
-                                }catch{}
-                                setPropLoading(null);
-                              }} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px",fontSize:10,color:C.text,cursor:"pointer"}}>
-                                {propLoading===String(p.id)?"...":"Cadastre"}
-                              </button>
-                            )}
-                          </div>
-                        )}
                       </div>
                     );
                   };
+
+                  const SectionHeader = ({col,title,desc,list,onSelectAll}:{col:string;title:string;desc:string;list:Prospect[];onSelectAll:()=>void}) => (
+                    <div>
+                      <div style={{padding:"8px 14px 5px",background:col+"10",borderBottom:`1px solid ${col}20`,borderTop:`1px solid ${col}20`}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:2}}>
+                          <span style={{fontSize:11,fontWeight:700,color:col,letterSpacing:"0.05em",textTransform:"uppercase"}}>{title} ({list.length})</span>
+                          <button onClick={onSelectAll} style={{fontSize:10,color:col,background:"transparent",border:"none",cursor:"pointer",fontWeight:600,opacity:0.8}}>Tout sélectionner</button>
+                        </div>
+                        <div style={{fontSize:10,color:C.muted,lineHeight:1.4}}>{desc}</div>
+                      </div>
+                    </div>
+                  );
+
+                  const showInGroups = prospFilter==="tous";
                   return(
                     <>
-                      {dpeRecents.length>0&&(
+                      {showInGroups?(
                         <>
-                          <div style={{padding:"6px 14px",background:"#F9731618",borderBottom:"1px solid #F9731630",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <span style={{fontSize:10,fontWeight:700,color:"#F97316",letterSpacing:"0.06em",textTransform:"uppercase"}}>DPE &lt;6 mois — Vente imminente ({dpeRecents.length})</span>
-                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dpeRecents.forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:"#F97316",background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Tout sélectionner</button>
-                          </div>
-                          {dpeRecents.map(renderRow)}
+                          {allDpeRecents.length>0&&(
+                            <>
+                              <SectionHeader col="#F97316" title="DPE récents — Vente imminente" desc="DPE obligatoire avant toute vente → ces propriétaires préparent une mise en vente." list={allDpeRecents} onSelectAll={()=>setSelProspects(s=>{const n=new Set(s);allDpeRecents.forEach(p=>n.add(p.id));return n;})}/>
+                              {allDpeRecents.map(renderRow)}
+                            </>
+                          )}
+                          {allDpeFGAnciens.length>0&&(
+                            <>
+                              <SectionHeader col={C.amber} title="DPE F/G — Obligation légale" desc="Loi Climat : interdiction de louer les passoires énergétiques. Contraints de rénover ou vendre." list={allDpeFGAnciens} onSelectAll={()=>setSelProspects(s=>{const n=new Set(s);allDpeFGAnciens.forEach(p=>n.add(p.id));return n;})}/>
+                              {allDpeFGAnciens.map(renderRow)}
+                            </>
+                          )}
+                          {allDvfList.length>0&&(
+                            <>
+                              <SectionHeader col={C.blue} title="DVF — Anciens acquéreurs" desc="Acheteurs de 2021-2024. Plus l'achat est ancien, plus la revente est statistiquement probable." list={allDvfList} onSelectAll={()=>setSelProspects(s=>{const n=new Set(s);allDvfList.slice(0,20).forEach(p=>n.add(p.id));return n;})}/>
+                              {allDvfList.map(renderRow)}
+                            </>
+                          )}
                         </>
-                      )}
-                      {dpeFGAnciens.length>0&&(
+                      ):(
                         <>
-                          <div style={{padding:"6px 14px",background:`${C.amber}15`,borderBottom:`1px solid ${C.amber}30`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <span style={{fontSize:10,fontWeight:700,color:C.amber,letterSpacing:"0.06em",textTransform:"uppercase"}}>DPE F/G — Obligation légale ({dpeFGAnciens.length})</span>
-                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dpeFGAnciens.forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:C.amber,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Tout sélectionner</button>
-                          </div>
-                          {dpeFGAnciens.map(renderRow)}
-                        </>
-                      )}
-                      {dvfList.length>0&&(
-                        <>
-                          <div style={{padding:"6px 14px",background:`${C.blue}10`,borderBottom:`1px solid ${C.blue}20`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <span style={{fontSize:10,fontWeight:700,color:C.blue,letterSpacing:"0.06em",textTransform:"uppercase"}}>DVF — Anciens acquéreurs ({dvfList.length})</span>
-                            <button onClick={()=>setSelProspects(s=>{const n=new Set(s);dvfList.slice(0,20).forEach(p=>n.add(p.id));return n;})} style={{fontSize:9,color:C.blue,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Top 20</button>
-                          </div>
-                          {dvfList.map(renderRow)}
+                          {filtered.length===0?(
+                            <div style={{padding:24,textAlign:"center",color:C.muted,fontSize:12}}>Aucun prospect dans cette catégorie</div>
+                          ):filtered.map(renderRow)}
                         </>
                       )}
                     </>
@@ -1406,10 +1465,15 @@ export default function App() {
               </div>
 
               {/* Footer */}
-              {prospects.length>0&&selProspects.size===0&&(
+              {prospects.length>0&&(
                 <div style={{padding:"8px 16px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:C.card}}>
-                  <span style={{fontSize:11,color:C.muted}}>{prospects.length} prospects · {prospects.filter(p=>p.proprietaire_nom).length} noms identifiés</span>
-                  <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",fontWeight:500,padding:0}}>Suivi →</button>
+                  <span style={{fontSize:11,color:C.muted}}>
+                    {selProspects.size>0
+                      ? <><span style={{color:C.gold,fontWeight:600}}>{selProspects.size} sélectionné{selProspects.size>1?"s":""}</span> · <button onClick={()=>setSelProspects(new Set())} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",padding:0}}>Effacer</button></>
+                      : <>{prospects.length} prospects · {Object.keys(prospCrm).filter(k=>prospects.find(p=>String(p.id)===k)).length} contactés</>
+                    }
+                  </span>
+                  <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",fontWeight:500,padding:0}}>Suivi courriers →</button>
                 </div>
               )}
             </div>
