@@ -935,8 +935,31 @@ export default function App() {
                           </div>
                         </div>
                         <div style={{fontFamily:DISPLAY,fontSize:22,fontWeight:500,color:C.text,marginBottom:4,lineHeight:1.2}}>{radarCurrent.adresse}</div>
-                        <div style={{fontSize:13,color:C.muted,marginBottom:6}}>{radarCurrent.ville}</div>
-                        {radarCurrent.proprietaire_nom&&<div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:4}}>{radarCurrent.proprietaire_nom}</div>}
+                        <div style={{fontSize:13,color:C.muted,marginBottom:10}}>{radarCurrent.ville}</div>
+                        {/* Bloc propriétaire */}
+                        {radarCurrent.proprietaire_nom?(
+                          <div style={{background:C.green+"12",border:`1px solid ${C.green}30`,borderRadius:9,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{width:30,height:30,borderRadius:"50%",background:C.green+"20",border:`1px solid ${C.green}40`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.green} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            </div>
+                            <div>
+                              <div style={{fontSize:11,fontWeight:600,color:C.green,textTransform:"uppercase",letterSpacing:"0.06em",lineHeight:1,marginBottom:3}}>Propriétaire identifié</div>
+                              <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.2}}>{radarCurrent.proprietaire_nom}</div>
+                              {radarCurrent.proprietaire_source&&radarCurrent.proprietaire_source!=="inconnu"&&(
+                                <div style={{fontSize:10,color:C.muted,marginTop:2}}>via {radarCurrent.proprietaire_source}</div>
+                              )}
+                            </div>
+                          </div>
+                        ):(
+                          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"9px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{width:28,height:28,borderRadius:"50%",background:C.border,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            </div>
+                            <div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>
+                              {radarCurrent.proprietaire_chargement?"Recherche du propriétaire…":"Propriétaire non identifié"}
+                            </div>
+                          </div>
+                        )}
                         <div style={{fontSize:12,color:C.muted}}>{radarCurrent.notes}</div>
                       </div>
                       <div style={{display:"flex",gap:4}}>
