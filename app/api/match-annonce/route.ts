@@ -77,21 +77,40 @@ async function fetchPhotoB64(url: string): Promise<string | null> {
   } catch { return null; }
 }
 
-async function sireneOwner(lat: number, lng: number, adresse: string): Promise<{nom:string;source:string;entreprise:string}|null> {
+async function sireneOwner(_lat: number, _lng: number, adresse: string): Promise<{nom:string;source:string;entreprise:string}|null> {
   try {
-    const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(adresse)}&activite_principale=68.20A,68.20B,68.10A,68.10B&page=1&per_page=5`;
+    // No activity filter — SCIs can be 68.20A, 68.32A, 68.10A, or even 96.x (family holding)
+    const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(adresse)}&page=1&per_page=10`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const data = await res.json();
     const results: any[] = data.results || [];
-    // Prendre le résultat dont l'adresse se rapproche le plus
-    for (const r of results) {
-      const dirigeants: any[] = r.dirigeants || [];
-      if (dirigeants.length > 0) {
-        const d = dirigeants[0];
+
+    // 1. Prefer real estate activity codes (68.x)
+    const realEstate = results.find(r => {
+      const ap: string = r.siege?.activite_principale || r.activite_principale || "";
+      return ap.startsWith("68");
+    });
+    // 2. Prefer SCI/SARL/foncière by name
+    const sci = results.find(r => {
+      const n = (r.nom_complet || r.nom_raison_sociale || "").toUpperCase();
+      return n.includes("SCI") || n.includes("SARL") || n.includes("SAS") || n.includes("FONCIERE") || n.includes("IMMOB");
+    });
+    // 3. Any result with dirigeants
+    const withDir = results.find(r => (r.dirigeants || []).length > 0);
+
+    for (const target of [realEstate, sci, withDir].filter(Boolean)) {
+      if (!target) continue;
+      const dgs: any[] = target.dirigeants || [];
+      if (dgs.length > 0) {
+        const d = dgs[0];
         const nom = [d.nom, d.prenoms].filter(Boolean).join(" ").trim();
-        return { nom, source: "sirene+dirigeant", entreprise: r.nom_complet || "" };
+        const isRealEstate = (target.siege?.activite_principale || "").startsWith("68");
+        return { nom, source: isRealEstate ? "sci+dirigeant" : "sirene+dirigeant", entreprise: target.nom_complet || "" };
       }
+      // Company without dirigeants in API response — return company name as owner
+      const nomEnt = (target.nom_complet || "").split("(")[0].trim();
+      if (nomEnt) return { nom: nomEnt, source: "sci", entreprise: nomEnt };
     }
     return null;
   } catch { return null; }
