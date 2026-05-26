@@ -1,0 +1,231 @@
+import { NextRequest, NextResponse } from "next/server";
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+async function getIGNParcels(lat: number, lng: number): Promise<any[]> {
+  const d = 0.006; // ~600m
+  const bbox = {
+    type: "Polygon",
+    coordinates: [[[lng-d,lat-d],[lng+d,lat-d],[lng+d,lat+d],[lng-d,lat+d],[lng-d,lat-d]]]
+  };
+  try {
+    const res = await fetch(
+      `https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify(bbox))}&_limit=80`,
+      { signal: AbortSignal.timeout(12000) }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.features || [];
+  } catch { return []; }
+}
+
+function parcelBbox(feature: any): string | null {
+  const ring = feature.geometry?.coordinates?.[0];
+  if (!ring || ring.length < 3) return null;
+  const lngs = ring.map((c: number[]) => c[0]);
+  const lats = ring.map((c: number[]) => c[1]);
+  return `${Math.min(...lngs)},${Math.min(...lats)},${Math.max(...lngs)},${Math.max(...lats)}`;
+}
+
+function parcelCenter(feature: any): [number,number] | null {
+  const ring = feature.geometry?.coordinates?.[0];
+  if (!ring || ring.length < 3) return null;
+  const lngs = ring.map((c: number[]) => c[0]);
+  const lats = ring.map((c: number[]) => c[1]);
+  return [
+    (Math.min(...lats)+Math.max(...lats))/2,
+    (Math.min(...lngs)+Math.max(...lngs))/2
+  ];
+}
+
+async function getIGNAerial(bbox: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image/jpeg&STYLES=&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&CRS=CRS:84&BBOX=${bbox}&WIDTH=320&HEIGHT=320`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 8000) return null;
+    return Buffer.from(buf).toString("base64");
+  } catch { return null; }
+}
+
+async function fetchPhotoB64(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(10000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; Mandatly/1.0)" }
+    });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 15000) return null; // rejeter images trop petites / erreurs HTML
+    return Buffer.from(buf).toString("base64");
+  } catch { return null; }
+}
+
+async function sireneOwner(lat: number, lng: number, adresse: string): Promise<{nom:string;source:string;entreprise:string}|null> {
+  try {
+    const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(adresse)}&activite_principale=68.20A,68.20B,68.10A,68.10B&page=1&per_page=5`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const results: any[] = data.results || [];
+    // Prendre le résultat dont l'adresse se rapproche le plus
+    for (const r of results) {
+      const dirigeants: any[] = r.dirigeants || [];
+      if (dirigeants.length > 0) {
+        const d = dirigeants[0];
+        const nom = [d.nom, d.prenoms].filter(Boolean).join(" ").trim();
+        return { nom, source: "sirene+dirigeant", entreprise: r.nom_complet || "" };
+      }
+    }
+    return null;
+  } catch { return null; }
+}
+
+async function reverseGeocode(lat: number, lng: number): Promise<string|null> {
+  try {
+    const res = await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return null;
+    const d = await res.json();
+    return d.features?.[0]?.properties?.label || null;
+  } catch { return null; }
+}
+
+// ── Route ────────────────────────────────────────────────────────────────────
+
+export async function POST(req: NextRequest) {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY manquante" }, { status: 503 });
+
+  const body = await req.json();
+  const { lat, lng, surface = 100, type = "Maison", photos = [] }: {
+    lat: number; lng: number; surface: number; type: string; photos: string[];
+  } = body;
+
+  if (!lat || !lng) return NextResponse.json({ error: "lat et lng requis" }, { status: 400 });
+
+  // ── 1. Toutes les parcelles dans le disque (~600m) ─────────────────────────
+  const allParcels = await getIGNParcels(lat, lng);
+
+  // ── 2. Filtrer par taille cohérente avec le type de bien ──────────────────
+  const isMaison = type === "Maison" || type === "Villa";
+  const minC = isMaison ? Math.max(surface * 1.2, 150) : 30;
+  const maxC = isMaison ? surface * 35 : surface * 5;
+
+  const candidates = allParcels
+    .filter(p => {
+      const c = p.properties?.contenance ?? 0;
+      return c >= minC && c <= maxC;
+    })
+    .slice(0, 7);
+
+  // ── 3. Vue aérienne IGN pour chaque candidat ──────────────────────────────
+  const withMeta = candidates.map(p => ({
+    section: p.properties?.section ?? "",
+    numero: p.properties?.numero ?? "",
+    contenance: p.properties?.contenance ?? 0,
+    commune: p.properties?.nom_com ?? "",
+    bbox: parcelBbox(p),
+    center: parcelCenter(p),
+    feature: p,
+  }));
+
+  const withAerials = (await Promise.all(
+    withMeta.map(async c => ({ ...c, aerial: c.bbox ? await getIGNAerial(c.bbox) : null }))
+  )).filter(c => c.aerial !== null);
+
+  // ── 4. Tenter de télécharger la photo de l'annonce ────────────────────────
+  let listingB64: string | null = null;
+  for (const url of photos.slice(0, 3)) {
+    listingB64 = await fetchPhotoB64(url);
+    if (listingB64) break;
+  }
+
+  // ── 5. Claude Vision : matching photo annonce ↔ vues aériennes ────────────
+  let visionResult: { match_index: number; confidence: number; reason: string } | null = null;
+
+  if (listingB64 && withAerials.length > 0) {
+    const content: any[] = [];
+
+    // Photo de l'annonce
+    content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: listingB64 } });
+    content.push({ type: "text", text: `Photo d'une annonce : ${type} d'environ ${surface}m², secteur Golfe de Saint-Tropez.` });
+
+    // Une vue aérienne par candidat
+    withAerials.forEach((c, i) => {
+      content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: c.aerial! } });
+      content.push({ type: "text", text: `Candidat ${i+1} — parcelle ${c.section}${c.numero} (${c.contenance}m², ${c.commune})` });
+    });
+
+    content.push({ type: "text", text: `Compare la photo de l'annonce avec les ${withAerials.length} vues aériennes. Pour chaque candidat recherche : piscine (forme/couleur), couleur de toiture, empreinte du bâti, végétation distinctive. Réponds UNIQUEMENT en JSON valide : {"match_index":N,"confidence":0-100,"reason":"..."}. match_index = numéro du candidat (1-based), 0 si aucun match évident. confidence < 40 si incertain.` });
+
+    try {
+      const cr = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": anthropicKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 300,
+          messages: [{ role: "user", content }]
+        }),
+        signal: AbortSignal.timeout(35000)
+      });
+      if (cr.ok) {
+        const cd = await cr.json();
+        const txt: string = cd.content?.[0]?.text ?? "";
+        const m = txt.match(/\{[\s\S]*?\}/);
+        if (m) {
+          try { visionResult = JSON.parse(m[0]); } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  // ── 6. Sélectionner la parcelle retenue ───────────────────────────────────
+  const matchIdx = visionResult && visionResult.confidence >= 45
+    ? visionResult.match_index - 1  // 1-based → 0-based
+    : -1;
+
+  const chosen = matchIdx >= 0 && matchIdx < withAerials.length
+    ? withAerials[matchIdx]
+    : (withAerials[0] ?? withMeta[0] ?? null);  // fallback : première parcelle compatible
+
+  // ── 7. Adresse + propriétaire ─────────────────────────────────────────────
+  let adresseLabel: string | null = null;
+  let owner: { nom: string; source: string; entreprise: string } | null = null;
+
+  if (chosen?.center) {
+    const [cLat, cLng] = chosen.center;
+    adresseLabel = await reverseGeocode(cLat, cLng);
+    if (adresseLabel) {
+      owner = await sireneOwner(cLat, cLng, adresseLabel);
+    }
+  }
+
+  // ── 8. DPE cross-check ────────────────────────────────────────────────────
+  // (optionnel — le frontend peut appeler /api/dpe séparément si besoin)
+
+  return NextResponse.json({
+    parcels_total: allParcels.length,
+    candidates_count: candidates.length,
+    aerials_fetched: withAerials.length,
+    vision_used: listingB64 !== null,
+    vision_confidence: visionResult?.confidence ?? null,
+    vision_reason: visionResult?.reason ?? null,
+    matched: matchIdx >= 0,
+    parcel: chosen ? {
+      section: chosen.section,
+      numero: chosen.numero,
+      contenance: chosen.contenance,
+      commune: chosen.commune,
+    } : null,
+    adresse: adresseLabel,
+    owner,
+  });
+}
