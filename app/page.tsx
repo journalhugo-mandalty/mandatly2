@@ -506,6 +506,27 @@ export default function App() {
     setRadarProspects(sorted);
     setRadarLoading(false);
     if(sorted.length>0) generateRadarLetterFn(sorted[0], radarLetterTemplate);
+    // Enrichissement propriétaire en arrière-plan sur les 20 premiers
+    const toEnrich = sorted.filter(p => p.lat && p.lng).slice(0, 20);
+    for (let i = 0; i < toEnrich.length; i += 4) {
+      const batch = toEnrich.slice(i, i + 4);
+      await Promise.allSettled(batch.map(async (p) => {
+        try {
+          const cleanAddr = p.adresse.replace(/\b\d{5}\b\s*/g, "").trim();
+          const q = cleanAddr.toLowerCase().includes(p.ville.toLowerCase()) ? cleanAddr : `${cleanAddr} ${p.ville}`;
+          const r = await fetch(`/api/proprietaire?lat=${p.lat}&lng=${p.lng}&adresse=${encodeURIComponent(q)}`);
+          if (!r.ok) return;
+          const d = await r.json();
+          if (!d.proprietaire_nom) return;
+          setRadarProspects(prev => prev.map(x => x.id === p.id ? {
+            ...x,
+            proprietaire_nom: d.proprietaire_nom,
+            civilite: d.civilite || "",
+            proprietaire_source: d.proprietaire_source || "",
+          } : x));
+        } catch {}
+      }));
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radarVilles, radarDone, radarLetterTemplate, agent]);
 
@@ -537,6 +558,19 @@ export default function App() {
     }
     setRadarLetterLoading(false);
   }, [agent]);
+
+  // Regénère la lettre quand le nom du propriétaire arrive sur le prospect courant
+  const radarCurrentId = radarProspects[radarIdx]?.id;
+  const radarCurrentNom = radarProspects[radarIdx]?.proprietaire_nom;
+  useEffect(() => {
+    const p = radarProspects[radarIdx];
+    if (!p || !p.proprietaire_nom || radarLetterLoading) return;
+    // Seulement si la lettre actuelle ne mentionne pas encore le nom
+    if (radarLetter && !radarLetter.includes(p.proprietaire_nom.split(" ")[0])) {
+      generateRadarLetterFn(p, radarLetterTemplate);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [radarCurrentNom, radarCurrentId]);
 
   const sendMsg = useCallback(async()=>{
     if(!input.trim()) return;
