@@ -88,15 +88,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Code INSEE introuvable" }, { status: 404 });
     }
 
-    // Fetch CSVs — sweet spot first (7-15 ans = mûrs pour revendre), puis années récentes
+    // geo-dvf/latest contient uniquement 2021-2025 (années antérieures vides)
+    // → on itère du plus ancien (meilleur signal vendeur) au plus récent
     const curYear = new Date().getFullYear();
-    // Sweet spot: acheté il y a 7-16 ans (geo-dvf commence en 2014)
-    const sweetYears: number[] = [];
-    for (let y = curYear - 7; y >= Math.max(2014, curYear - 16); y--) sweetYears.push(y);
-    // Années récentes en fallback (signal DPE/contrainte loi Climat)
-    const recentYears: number[] = [];
-    for (let y = curYear; y > curYear - 7; y--) recentYears.push(y);
-    const years = [...sweetYears, ...recentYears];
+    const years = [2021, 2022, 2023, 2024, 2025].filter(y => y <= curYear);
 
     let allTx: any[] = [];
     for (const year of years) {
@@ -183,12 +178,14 @@ export async function GET(req: NextRequest) {
       if (isMaison && terrain > 0) notesParts.push(`terrain ${terrain}m²`);
       if (prixM2 > 0) notesParts.push(`${prixM2.toLocaleString("fr-FR")}€/m²`);
 
-      // Raw signal: ancienneté = multiplicateur dominant (sweet spot 7-16 ans)
+      // Ancienneté = multiplicateur principal (données dispo 2021-2025 uniquement)
+      // Plus ancien = meilleur signal vendeur dans la fenêtre disponible
       const anciennete = currentYear - annee;
-      const ancBonus = anciennete >= 7 && anciennete <= 16 ? 2.2
-        : anciennete >= 4 ? 0.7
-        : anciennete < 4 ? 0.08   // tout juste acheté — pas vendeur
-        : 1.0;
+      const ancBonus = anciennete >= 5 ? 2.2   // 2021 — sweet spot dispo
+        : anciennete === 4 ? 1.7               // 2022 — bon signal
+        : anciennete === 3 ? 1.0               // 2023 — passable
+        : anciennete === 2 ? 0.35              // 2024 — peu probable
+        : 0.06;                                // 2025 — vient d'acheter
       const rawSignal = (valeur * 0.5 + surface * 800 + prixM2 * 60 + (isMaison ? 80000 : 0)) * ancBonus;
       const rawId = `${t.adresse_numero}${t.adresse_nom_voie}${t.date_mutation?.slice(0,7)||""}`;
 
