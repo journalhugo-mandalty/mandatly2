@@ -7,6 +7,15 @@ const COL = {
   lng: 38, lat: 39,
 };
 
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function parseCSV(text: string): any[] {
   const lines = text.split("\n");
   const rows: any[] = [];
@@ -43,19 +52,35 @@ export async function GET(req: NextRequest) {
   const mode = searchParams.get("mode") || "prospects";
   const typeEst = searchParams.get("type") || "Maison";
   const surfaceEst = parseFloat(searchParams.get("surface") || "100");
+  // Geo-estimation params (passed from frontend after geocoding)
+  const addressLat = parseFloat(searchParams.get("address_lat") || "");
+  const addressLng = parseFloat(searchParams.get("address_lng") || "");
+  const inseeParam = searchParams.get("insee") || "";
+  const deptParam = searchParams.get("dept") || "";
 
   try {
-    const banRes = await fetch(
-      `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(ville)}&type=municipality&limit=1`
-    );
-    const banData = await banRes.json();
-    if (!banData.features?.length) {
-      return NextResponse.json({ error: "Ville introuvable" }, { status: 404 });
+    let lat: number, lng: number, nomVille: string, inseeCode: string, dept: string;
+
+    // If insee+dept provided directly (geo-estimation), skip BAN geocoding
+    if (inseeParam && deptParam && !isNaN(addressLat) && !isNaN(addressLng)) {
+      lat = addressLat;
+      lng = addressLng;
+      inseeCode = inseeParam;
+      dept = deptParam;
+      nomVille = ville || inseeParam;
+    } else {
+      const banRes = await fetch(
+        `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(ville)}&type=municipality&limit=1`
+      );
+      const banData = await banRes.json();
+      if (!banData.features?.length) {
+        return NextResponse.json({ error: "Ville introuvable" }, { status: 404 });
+      }
+      [lng, lat] = banData.features[0].geometry.coordinates;
+      nomVille = banData.features[0].properties.city || ville;
+      inseeCode = banData.features[0].properties.citycode || "";
+      dept = inseeCode.slice(0, inseeCode.length === 5 ? 2 : 3);
     }
-    const [lng, lat] = banData.features[0].geometry.coordinates;
-    const nomVille = banData.features[0].properties.city || ville;
-    const inseeCode: string = banData.features[0].properties.citycode || "";
-    const dept = inseeCode.slice(0, inseeCode.length === 5 ? 2 : 3);
 
     if (!inseeCode) {
       return NextResponse.json({ error: "Code INSEE introuvable" }, { status: 404 });
@@ -84,21 +109,49 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    // Estimation mode: return raw comparables
+    // Estimation mode: geo-filtered comparables
     if (mode === "estimation") {
-      const cutoff = new Date(Date.now() - 4 * 365 * 24 * 60 * 60 * 1000);
-      const comps = allTx.filter(
-        (t) =>
+      const cutoff = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000);
+      const hasGeo = !isNaN(addressLat) && !isNaN(addressLng);
+
+      // Base filter: type + surface ±50% + recent
+      let comps = allTx
+        .filter(t =>
           t.type_local === typeEst &&
           t.surface_reelle_bati > 0 &&
           t.valeur_fonciere > 0 &&
           t.surface_reelle_bati >= surfaceEst * 0.5 &&
-          t.surface_reelle_bati <= surfaceEst * 1.6 &&
+          t.surface_reelle_bati <= surfaceEst * 1.8 &&
           new Date(t.date_mutation) >= cutoff
-      );
+        )
+        .map(t => ({
+          ...t,
+          distance_m: hasGeo
+            ? Math.round(haversineKm(addressLat, addressLng, t.latitude, t.longitude) * 1000)
+            : null,
+        }));
+
+      let rayonKm = 0;
+
+      if (hasGeo) {
+        // Expand radius progressively until ≥ 5 comparables
+        for (const km of [0.8, 1.5, 3, 5, 10]) {
+          const near = comps.filter(t => (t.distance_m ?? 99999) <= km * 1000);
+          if (near.length >= 5 || km === 10) {
+            comps = near;
+            rayonKm = km;
+            break;
+          }
+        }
+        // Sort by distance (nearest first)
+        comps.sort((a, b) => (a.distance_m ?? 99999) - (b.distance_m ?? 99999));
+      }
+
       return NextResponse.json({
         transactions: comps.slice(0, 60),
         lat: String(lat), lng: String(lng), ville: nomVille,
+        rayon_km: rayonKm,
+        total_commune: allTx.length,
       });
     }
 

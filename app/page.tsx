@@ -4,13 +4,30 @@ import { getSupabase } from "../lib/supabase";
 
 const MapComponent = lazy(() => import("./map-component"));
 
-// ── Estimation & Avis de valeur via DVF ──────────────────────
-async function lancerEstimation(type: string, surface: number, ville: string, etat: string) {
+// ── Estimation & Avis de valeur via DVF géo-localisée ──────────────────────
+async function lancerEstimation(type: string, surface: number, adresse: string, etat: string) {
+  // 1. Géocoder l'adresse précise
+  const banRes = await fetch(
+    `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(adresse)}&limit=1`
+  );
+  if (!banRes.ok) throw new Error("Service de géocodage indisponible");
+  const banData = await banRes.json();
+  const feature = banData.features?.[0];
+  if (!feature) throw new Error("Adresse introuvable — vérifiez l'adresse saisie (ex: 14 rue des Acacias, Bordeaux)");
+
+  const [lng, lat] = feature.geometry.coordinates;
+  const adresseLabel: string = feature.properties.label || adresse;
+  const city: string = feature.properties.city || adresse;
+  const inseeCode: string = feature.properties.citycode || "";
+  const dept: string = inseeCode.slice(0, inseeCode.length === 5 ? 2 : 3);
+
+  // 2. Récupérer DVF avec filtrage géographique
   const dvfRes = await fetch(
-    `/api/dvf?ville=${encodeURIComponent(ville)}&mode=estimation&type=${encodeURIComponent(type)}&surface=${surface}`
+    `/api/dvf?ville=${encodeURIComponent(city)}&mode=estimation&type=${encodeURIComponent(type)}&surface=${surface}&address_lat=${lat}&address_lng=${lng}&insee=${inseeCode}&dept=${dept}`
   );
   if (!dvfRes.ok) throw new Error("API DVF indisponible");
   const dvfData = await dvfRes.json();
+  if (dvfData.error) throw new Error(dvfData.error);
   const comparables: any[] = dvfData.transactions || [];
 
   const prixM2s = comparables
@@ -18,7 +35,7 @@ async function lancerEstimation(type: string, surface: number, ville: string, et
     .filter((p: number) => p > 500 && p < 25000)
     .sort((a: number, b: number) => a - b);
 
-  if (prixM2s.length < 3) throw new Error(`Seulement ${prixM2s.length} comparable(s) DVF — élargissez le rayon ou changez de ville`);
+  if (prixM2s.length < 3) throw new Error(`Seulement ${prixM2s.length} vente(s) comparable(s) dans un rayon de ${dvfData.rayon_km || 10} km — essayez une surface différente`);
 
   const mid = Math.floor(prixM2s.length / 2);
   const median = prixM2s.length % 2 ? prixM2s[mid] : (prixM2s[mid-1] + prixM2s[mid]) / 2;
@@ -26,18 +43,24 @@ async function lancerEstimation(type: string, surface: number, ville: string, et
   const base = median * surface * facteur;
 
   return {
-    ville: dvfData.ville, nb_comparables: comparables.length,
+    adresse: adresseLabel,
+    ville: city,
+    lat, lng,
+    rayon_km: dvfData.rayon_km || 5,
+    nb_comparables: comparables.length,
     prix_m2_median: Math.round(median),
     prix_m2_min: Math.round(prixM2s[0]),
     prix_m2_max: Math.round(prixM2s[prixM2s.length-1]),
     estimation: Math.round(base),
     fourchette_bas: Math.round(base * 0.91),
     fourchette_haut: Math.round(base * 1.09),
-    comparables: comparables.slice(0, 6).map((t: any) => ({
+    comparables: comparables.slice(0, 8).map((t: any) => ({
       adresse: `${t.adresse_numero||""} ${t.adresse_nom_voie||""}`.trim() || "—",
-      surface: t.surface_reelle_bati, prix: t.valeur_fonciere,
+      surface: t.surface_reelle_bati,
+      prix: t.valeur_fonciere,
       prix_m2: Math.round(t.valeur_fonciere / t.surface_reelle_bati),
       date: t.date_mutation?.slice(0, 7) || "",
+      distance_m: t.distance_m ?? null,
     })),
   };
 }
@@ -112,7 +135,7 @@ export default function App() {
   const [prospMethod, setProspMethod] = useState("");
   const [profile, setProfile] = useState(false);
   // Estimation
-  const [estForm, setEstForm] = useState({type:"Maison",surface:"",ville:"",etat:"bon"});
+  const [estForm, setEstForm] = useState({type:"Maison",surface:"",adresse:"",etat:"bon"});
   const [estResult, setEstResult] = useState<any>(null);
   const [estLoading, setEstLoading] = useState(false);
   const [estError, setEstError] = useState("");
@@ -1193,7 +1216,7 @@ export default function App() {
                           <div style={{fontSize:12,color:C.muted,letterSpacing:"0.02em"}}>{selM.adresse}, {selM.ville}</div>
                         </div>
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}}>
-                          <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),ville:selM.ville,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
+                          <button onClick={()=>{setEstForm({type:selM.type,surface:String(selM.surface),adresse:`${selM.adresse}, ${selM.ville}`,etat:"bon"});setEstResult(null);setNav("estimation");}} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Estimer</button>
                           <button onClick={()=>setEmailModal({to:selM.email,sujet:`${selM.nom_propriete} — `,corps:"",loading:false})} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,cursor:"pointer",fontWeight:500}}>Email</button>
                           {(()=>{
                             const sig = sigState[selM.id];
@@ -1476,35 +1499,43 @@ export default function App() {
         {nav==="estimation"&&(
           <div style={{flex:1,display:"flex",overflow:"hidden"}}>
             {/* LEFT: form */}
-            <div style={{width:320,borderRight:`1px solid ${C.border}`,background:C.surface,display:"flex",flexDirection:"column",flexShrink:0}}>
+            <div style={{width:300,borderRight:`1px solid ${C.border}`,background:C.surface,display:"flex",flexDirection:"column",flexShrink:0}}>
               <div style={{padding:"20px 20px 16px",borderBottom:`1px solid ${C.border}`}}>
-                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:4}}>Estimation</div>
-                <div style={{fontSize:12,color:C.muted}}>Avis de valeur basé sur les ventes DVF</div>
+                <div style={{fontFamily:DISPLAY,fontSize:18,fontWeight:500,color:C.text,letterSpacing:"0.01em",marginBottom:4}}>Avis de valeur</div>
+                <div style={{fontSize:12,color:C.muted}}>Estimation par comparables DVF géolocalisés</div>
               </div>
               <div style={{flex:1,overflowY:"auto",padding:20,display:"flex",flexDirection:"column",gap:14}}>
-                {[{l:"Type de bien",k:"type",type:"select",opts:["Maison","Appartement"]},{l:"Surface habitable (m²)",k:"surface",type:"number",placeholder:"Ex: 120"},{l:"Ville ou code postal",k:"ville",type:"text",placeholder:"Ex: Bordeaux"},{l:"État général",k:"etat",type:"select",opts:["neuf","bon","moyen","travaux"]}].map(f=>(
+                {([
+                  {l:"Type de bien",k:"type",type:"select",opts:["Maison","Appartement"]},
+                  {l:"Surface habitable (m²)",k:"surface",type:"number",placeholder:"Ex: 120"},
+                  {l:"Adresse précise",k:"adresse",type:"text",placeholder:"14 rue des Acacias, Bordeaux"},
+                  {l:"État général",k:"etat",type:"select",opts:["neuf","bon","moyen","travaux"]},
+                ] as any[]).map((f:any)=>(
                   <div key={f.k}>
                     <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>{f.l}</div>
                     {f.type==="select"?(
                       <select value={(estForm as any)[f.k]} onChange={e=>setEstForm(x=>({...x,[f.k]:e.target.value}))} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13,cursor:"pointer"}}>
-                        {f.opts!.map(o=><option key={o} value={o} style={{background:C.card}}>{o.charAt(0).toUpperCase()+o.slice(1)}</option>)}
+                        {f.opts!.map((o:string)=><option key={o} value={o} style={{background:C.card}}>{o.charAt(0).toUpperCase()+o.slice(1)}</option>)}
                       </select>
                     ):(
-                      <input type={f.type} value={(estForm as any)[f.k]} onChange={e=>setEstForm(x=>({...x,[f.k]:e.target.value}))} placeholder={(f as any).placeholder} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                      <input type={f.type} value={(estForm as any)[f.k]} onChange={e=>setEstForm(x=>({...x,[f.k]:e.target.value}))} placeholder={f.placeholder} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
                     )}
                   </div>
                 ))}
                 {estError&&<div style={{fontSize:12,color:C.red,padding:"8px 12px",background:C.red+"10",borderRadius:8}}>{estError}</div>}
-                <button disabled={estLoading||!estForm.surface||!estForm.ville} onClick={async()=>{
+                <button disabled={estLoading||!estForm.surface||!estForm.adresse} onClick={async()=>{
                   setEstLoading(true); setEstError(""); setEstResult(null);
                   try {
-                    const r = await lancerEstimation(estForm.type, parseFloat(estForm.surface), estForm.ville, estForm.etat);
+                    const r = await lancerEstimation(estForm.type, parseFloat(estForm.surface), estForm.adresse, estForm.etat);
                     setEstResult(r);
                   } catch(e:any){setEstError(e.message);}
                   setEstLoading(false);
-                }} style={{marginTop:8,background:estLoading||!estForm.surface||!estForm.ville?C.border:C.accent,color:estLoading||!estForm.surface||!estForm.ville?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:600,cursor:estLoading||!estForm.surface||!estForm.ville?"default":"pointer",transition:"all 0.15s"}}>
-                  {estLoading?"Analyse en cours...":"Estimer le bien"}
+                }} style={{marginTop:8,background:estLoading||!estForm.surface||!estForm.adresse?C.border:C.accent,color:estLoading||!estForm.surface||!estForm.adresse?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:600,cursor:estLoading||!estForm.surface||!estForm.adresse?"default":"pointer",transition:"all 0.15s"}}>
+                  {estLoading?"Géolocalisation et analyse...":"Estimer le bien"}
                 </button>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.5,marginTop:4}}>
+                  Comparables DVF dans un rayon progressif autour de l&apos;adresse exacte
+                </div>
               </div>
             </div>
             {/* RIGHT: result */}
@@ -1512,59 +1543,187 @@ export default function App() {
               {!estResult&&!estLoading&&(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.muted,textAlign:"center"}}>
                   <div>
-                    <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Remplissez le formulaire</div>
-                    <div style={{fontSize:12}}>{"L'estimation s'appuie sur les ventes réelles DVF dans un rayon de 5 km"}</div>
+                    <div style={{fontFamily:DISPLAY,fontSize:24,fontWeight:500,color:C.text,marginBottom:8}}>Avis de valeur</div>
+                    <div style={{fontSize:13,marginBottom:4}}>Saisissez une adresse précise pour obtenir</div>
+                    <div style={{fontSize:13}}>une estimation basée sur les ventes DVF les plus proches</div>
                   </div>
                 </div>
               )}
-              {estResult&&(
-                <>
-                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:28}}>
-                    <div>
-                      <div style={{fontSize:12,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:500}}>Avis de valeur — {estResult.ville}</div>
-                      <div style={{fontFamily:DISPLAY,fontSize:48,fontWeight:500,color:C.text,letterSpacing:"-0.02em",lineHeight:1}}>{fmt(estResult.estimation)} €</div>
-                      <div style={{fontSize:14,color:C.muted,marginTop:6}}>Fourchette {fmt(estResult.fourchette_bas)} — {fmt(estResult.fourchette_haut)} €</div>
-                    </div>
-                    <button onClick={()=>{
-                      const w = window.open("","_blank");
-                      if(!w) return;
-                      w.document.write(`<!DOCTYPE html><html><head><title>Avis de Valeur — ${estResult.ville}</title><style>body{font-family:-apple-system,sans-serif;max-width:700px;margin:40px auto;color:#111;line-height:1.5}h1{font-size:28px;font-weight:700;margin-bottom:4px}h2{font-size:16px;font-weight:600;margin:24px 0 10px}.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:24px}.card{border:1px solid #eee;border-radius:8px;padding:14px}.label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:4px}.val{font-size:18px;font-weight:700}.fourchette{background:#f5f5f5;border-radius:8px;padding:16px;margin-bottom:24px;display:flex;justify-content:space-between;align-items:center}table{width:100%;border-collapse:collapse}td,th{padding:8px 12px;border-bottom:1px solid #eee;font-size:12px}th{text-align:left;font-weight:600;color:#888;text-transform:uppercase;font-size:10px;letter-spacing:.06em}.footer{margin-top:40px;font-size:11px;color:#aaa;border-top:1px solid #eee;padding-top:12px}@media print{button{display:none}}</style></head><body>
-                      <h1>Avis de Valeur</h1><p style="color:#888">${estForm.type} · ${estForm.surface} m² · État ${estForm.etat} · ${estResult.ville}</p>
-                      <div class="fourchette"><div><div class="label">Estimation centrale</div><div style="font-size:32px;font-weight:700">${fmt(estResult.estimation)} €</div></div><div style="text-align:right"><div class="label">Fourchette</div><div style="font-size:20px;font-weight:600">${fmt(estResult.fourchette_bas)} — ${fmt(estResult.fourchette_haut)} €</div></div></div>
-                      <div class="grid"><div class="card"><div class="label">Prix/m² médian</div><div class="val">${fmt(estResult.prix_m2_median)} €/m²</div></div><div class="card"><div class="label">Comparables analysés</div><div class="val">${estResult.nb_comparables}</div></div><div class="card"><div class="label">Surface évaluée</div><div class="val">${estForm.surface} m²</div></div></div>
-                      <h2>Ventes comparables (DVF)</h2><table><tr><th>Adresse</th><th>Surface</th><th>Prix</th><th>€/m²</th><th>Date</th></tr>${estResult.comparables.map((c:any)=>`<tr><td>${c.adresse}</td><td>${c.surface}m²</td><td>${fmt(c.prix)}€</td><td>${fmt(c.prix_m2)}€</td><td>${c.date}</td></tr>`).join("")}</table>
-                      <div class="footer">Avis de valeur généré le ${new Date().toLocaleDateString("fr-FR")} · Source : DVF Etalab (données officielles) · ${agent.prenom} ${agent.nom} — ${agent.agence}</div>
-                      <script>window.print();</script></body></html>`);
-                      w.document.close();
-                    }} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer",flexShrink:0}}>
-                      Imprimer PDF
-                    </button>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:28}}>
-                    {[{l:"Prix/m² médian",v:fmt(estResult.prix_m2_median)+" €/m²"},{l:"Fourchette marché",v:`${fmt(estResult.prix_m2_min)} — ${fmt(estResult.prix_m2_max)} €/m²`},{l:"Comparables DVF",v:`${estResult.nb_comparables} ventes`}].map(i=>(
-                      <div key={i.l} style={{...card(),padding:"16px 20px"}}>
-                        <div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{i.l}</div>
-                        <div style={{fontSize:15,fontWeight:700,color:C.text}}>{i.v}</div>
+              {estResult&&(()=>{
+                const fmtDist = (m:number|null) => {
+                  if(!m) return null;
+                  return m < 1000 ? `${m} m` : `${(m/1000).toFixed(1)} km`;
+                };
+                const distColor = (m:number|null) => {
+                  if(!m) return C.muted;
+                  if(m<500) return C.green;
+                  if(m<1500) return C.amber;
+                  return C.muted;
+                };
+                const printPdf = () => {
+                  const w = window.open("","_blank");
+                  if(!w) return;
+                  const dateStr = new Date().toLocaleDateString("fr-FR",{day:"2-digit",month:"long",year:"numeric"});
+                  const rows = estResult.comparables.map((c:any,i:number)=>{
+                    const d = fmtDist(c.distance_m);
+                    const dc = c.distance_m<500?"#2A6647":c.distance_m<1500?"#B5762A":"#8A8372";
+                    const bg = i%2===0?"#FFFFFF":"#F8F6F1";
+                    return `<tr style="background:${bg}"><td>${c.adresse}</td><td style="color:${dc};font-weight:500">${d||"—"}</td><td>${c.surface} m²</td><td style="font-weight:600">${fmt(c.prix)} €</td><td>${fmt(c.prix_m2)} €/m²</td><td style="color:#8A8372">${c.date}</td></tr>`;
+                  }).join("");
+                  w.document.write(`<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Avis de Valeur — ${estResult.adresse}</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'DM Sans',-apple-system,sans-serif;color:#14213D;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cover{background:linear-gradient(135deg,#14213D 0%,#1C2D52 100%);min-height:100vh;padding:52px 60px;display:flex;flex-direction:column;color:#fff;page-break-after:always}
+.cover-agency{font-family:'Cormorant Garamond',serif;font-size:13px;letter-spacing:0.18em;text-transform:uppercase;color:#C4A35A;margin-bottom:auto;padding-bottom:40px}
+.cover-badge{font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:#C4A35A;margin-bottom:14px;font-weight:500}
+.cover-title{font-family:'Cormorant Garamond',serif;font-size:56px;font-weight:300;line-height:1.05;color:#fff;margin-bottom:6px}
+.cover-sub{font-size:14px;color:rgba(255,255,255,0.55);margin-bottom:4px}
+.cover-type{font-size:12px;color:rgba(255,255,255,0.35);margin-bottom:44px}
+.price-box{display:inline-flex;flex-direction:column;gap:8px;background:rgba(196,163,90,0.12);border:1px solid rgba(196,163,90,0.35);border-radius:12px;padding:28px 36px;margin-bottom:52px}
+.price-label{font-size:9px;letter-spacing:0.18em;text-transform:uppercase;color:#C4A35A;font-weight:500}
+.price-main{font-family:'Cormorant Garamond',serif;font-size:52px;font-weight:500;color:#fff;letter-spacing:-0.01em}
+.price-range{font-size:13px;color:rgba(255,255,255,0.55);margin-top:2px}
+.cover-footer{border-top:1px solid rgba(255,255,255,0.08);padding-top:22px;display:flex;justify-content:space-between;align-items:flex-end}
+.cover-agent{font-size:14px;font-weight:500;color:#fff}
+.cover-date{font-size:11px;color:rgba(255,255,255,0.35)}
+.page{padding:48px 60px}
+.section{margin-bottom:40px}
+.section-title{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:500;color:#14213D;border-bottom:1px solid #EAE5D8;padding-bottom:10px;margin-bottom:20px}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.kpi{border:1px solid #EAE5D8;border-radius:10px;padding:18px 20px;background:#F8F6F1}
+.kpi-label{font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:#8A8372;margin-bottom:6px;font-weight:500}
+.kpi-val{font-size:18px;font-weight:700;color:#14213D}
+.est-row{display:flex;gap:0;border:1px solid #EAE5D8;border-radius:10px;overflow:hidden;margin-bottom:0}
+.est-cell{flex:1;padding:22px 24px;border-right:1px solid #EAE5D8;background:#F8F6F1}
+.est-cell:last-child{border-right:none}
+.est-cell.center{background:#14213D;text-align:center}
+.est-cell.center .ec-label{color:rgba(255,255,255,0.5)}
+.est-cell.center .ec-val{color:#C4A35A;font-size:28px}
+.ec-label{font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:#8A8372;margin-bottom:6px;display:block;font-weight:500}
+.ec-val{font-size:20px;font-weight:700;color:#14213D;display:block}
+table{width:100%;border-collapse:collapse}
+th{font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#8A8372;font-weight:600;padding:0 12px 10px;text-align:left}
+td{padding:11px 12px;font-size:12px;color:#14213D}
+.source-note{font-size:10px;color:#8A8372;margin-top:12px;font-style:italic}
+.doc-footer{border-top:1px solid #EAE5D8;padding:18px 60px;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#8A8372}
+@page{margin:0;size:A4}@media print{.cover{min-height:100vh;page-break-after:always}}</style>
+</head><body>
+<div class="cover">
+  <div class="cover-agency">${agent.agence}</div>
+  <div>
+    <div class="cover-badge">Avis de valeur immobilière — Confidentiel</div>
+    <div class="cover-title">Estimation<br>de votre bien</div>
+    <div class="cover-sub">${estResult.adresse}</div>
+    <div class="cover-type">${estForm.type} · ${estForm.surface} m² · État : ${estForm.etat}</div>
+    <div class="price-box">
+      <span class="price-label">Valeur de marché estimée</span>
+      <span class="price-main">${fmt(estResult.estimation)} €</span>
+      <span class="price-range">Fourchette : ${fmt(estResult.fourchette_bas)} — ${fmt(estResult.fourchette_haut)} €</span>
+    </div>
+    <div class="cover-footer">
+      <div><div class="cover-agent">${agent.prenom} ${agent.nom}</div><div class="cover-date">${agent.agence}</div></div>
+      <div class="cover-date">Établi le ${dateStr}</div>
+    </div>
+  </div>
+</div>
+<div class="page">
+  <div class="section">
+    <div class="section-title">Synthèse du marché local</div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-label">Prix/m² médian</div><div class="kpi-val">${fmt(estResult.prix_m2_median)} €</div></div>
+      <div class="kpi"><div class="kpi-label">Fourchette marché</div><div class="kpi-val">${fmt(estResult.prix_m2_min)}–${fmt(estResult.prix_m2_max)} €</div></div>
+      <div class="kpi"><div class="kpi-label">Ventes analysées</div><div class="kpi-val">${estResult.nb_comparables}</div></div>
+      <div class="kpi"><div class="kpi-label">Rayon d'analyse</div><div class="kpi-val">${estResult.rayon_km < 1 ? estResult.rayon_km*1000+" m" : estResult.rayon_km+" km"}</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Estimation détaillée</div>
+    <div class="est-row">
+      <div class="est-cell"><span class="ec-label">Prix bas</span><span class="ec-val">${fmt(estResult.fourchette_bas)} €</span></div>
+      <div class="est-cell center"><span class="ec-label">Valeur marché</span><span class="ec-val">${fmt(estResult.estimation)} €</span></div>
+      <div class="est-cell"><span class="ec-label">Prix optimisé</span><span class="ec-val">${fmt(estResult.fourchette_haut)} €</span></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Ventes comparables — DVF (Demandes de Valeurs Foncières)</div>
+    <table>
+      <thead><tr><th>Adresse</th><th>Distance</th><th>Surface</th><th>Prix de vente</th><th>€/m²</th><th>Date</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="source-note">Source : Demandes de Valeurs Foncières (DVF) — données officielles de la Direction Générale des Finances Publiques (DGFIP), republication Etalab.</div>
+  </div>
+</div>
+<div class="doc-footer">
+  <span>${agent.agence} — ${agent.prenom} ${agent.nom}</span>
+  <span>Avis de valeur établi le ${dateStr}</span>
+  <span>Document confidentiel — Usage exclusif du destinataire</span>
+</div>
+<script>window.print();</script>
+</body></html>`);
+                  w.document.close();
+                };
+                return (
+                  <>
+                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:32}}>
+                      <div>
+                        <div style={{fontSize:11,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:500}}>Avis de valeur</div>
+                        <div style={{fontSize:13,color:C.muted,marginBottom:10}}>{estResult.adresse}</div>
+                        <div style={{fontFamily:DISPLAY,fontSize:52,fontWeight:500,color:C.text,letterSpacing:"-0.02em",lineHeight:1}}>{fmt(estResult.estimation)} €</div>
+                        <div style={{fontSize:14,color:C.muted,marginTop:8}}>Fourchette {fmt(estResult.fourchette_bas)} — {fmt(estResult.fourchette_haut)} €</div>
+                        <div style={{fontSize:12,color:C.muted,marginTop:6}}>
+                          {estResult.nb_comparables} vente{estResult.nb_comparables>1?"s":""} comparable{estResult.nb_comparables>1?"s":""} · rayon {estResult.rayon_km < 1 ? estResult.rayon_km*1000+"m" : estResult.rayon_km+"km"}
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                  <div style={{...card(),padding:"24px"}}>
-                    <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:16}}>Ventes comparables DVF</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 60px 90px 80px 80px",gap:8,marginBottom:8}}>
-                      {["Adresse","Surface","Prix","€/m²","Date"].map(h=><div key={h} style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</div>)}
+                      <button onClick={printPdf} style={{background:C.accent,color:dark?"#080808":"#FAFAFA",border:"none",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+                        Rapport PDF
+                      </button>
                     </div>
-                    {estResult.comparables.map((c:any,i:number)=>(
-                      <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 60px 90px 80px 80px",gap:8,padding:"10px 0",borderTop:`1px solid ${C.border}`}}>
-                        <div style={{fontSize:12,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.adresse}</div>
-                        <div style={{fontSize:12,color:C.muted}}>{c.surface}m²</div>
-                        <div style={{fontSize:12,color:C.text,fontWeight:500}}>{fmt(c.prix)}€</div>
-                        <div style={{fontSize:12,color:C.text}}>{fmt(c.prix_m2)}</div>
-                        <div style={{fontSize:12,color:C.muted}}>{c.date}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:28}}>
+                      {[
+                        {l:"Prix/m² médian",v:fmt(estResult.prix_m2_median)+" €/m²"},
+                        {l:"Fourchette marché",v:`${fmt(estResult.prix_m2_min)}–${fmt(estResult.prix_m2_max)} €/m²`},
+                        {l:"Comparables DVF",v:`${estResult.nb_comparables} ventes`},
+                        {l:"Rayon d'analyse",v:estResult.rayon_km < 1 ? estResult.rayon_km*1000+"m" : estResult.rayon_km+"km"},
+                      ].map(i=>(
+                        <div key={i.l} style={{...card(),padding:"16px 18px"}}>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{i.l}</div>
+                          <div style={{fontSize:14,fontWeight:700,color:C.text}}>{i.v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{...card(),padding:"24px",marginBottom:24}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:0,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+                        {[
+                          {l:"Prix bas",v:fmt(estResult.fourchette_bas)+" €",h:false},
+                          {l:"Valeur marché",v:fmt(estResult.estimation)+" €",h:true},
+                          {l:"Prix optimisé",v:fmt(estResult.fourchette_haut)+" €",h:false},
+                        ].map((it,i)=>(
+                          <div key={i} style={{padding:"20px 24px",background:it.h?C.accent:C.surface,borderRight:i<2?`1px solid ${C.border}`:"none"}}>
+                            <div style={{fontSize:10,color:it.h?(dark?"#080808":"rgba(255,255,255,0.7)"):C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{it.l}</div>
+                            <div style={{fontSize:20,fontWeight:700,color:it.h?(dark?"#080808":"#FFFFFF"):C.text}}>{it.v}</div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </>
-              )}
+                    </div>
+                    <div style={{...card(),padding:"24px"}}>
+                      <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:16}}>Ventes comparables — DVF</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 70px 60px 90px 80px 70px",gap:8,marginBottom:8}}>
+                        {["Adresse","Distance","Surface","Prix","€/m²","Date"].map(h=><div key={h} style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</div>)}
+                      </div>
+                      {estResult.comparables.map((c:any,i:number)=>(
+                        <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 70px 60px 90px 80px 70px",gap:8,padding:"10px 0",borderTop:`1px solid ${C.border}`,alignItems:"center"}}>
+                          <div style={{fontSize:12,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.adresse}</div>
+                          <div style={{fontSize:11,fontWeight:600,color:distColor(c.distance_m)}}>{fmtDist(c.distance_m)||"—"}</div>
+                          <div style={{fontSize:12,color:C.muted}}>{c.surface}m²</div>
+                          <div style={{fontSize:12,color:C.text,fontWeight:500}}>{fmt(c.prix)}€</div>
+                          <div style={{fontSize:12,color:C.text}}>{fmt(c.prix_m2)}</div>
+                          <div style={{fontSize:12,color:C.muted}}>{c.date}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}
