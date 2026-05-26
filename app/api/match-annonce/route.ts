@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
       content.push({ type: "text", text: `Candidat ${i+1} — parcelle ${c.section}${c.numero} (${c.contenance}m², ${c.commune})` });
     });
 
-    content.push({ type: "text", text: `Compare la photo de l'annonce avec les ${withAerials.length} vues aériennes. Pour chaque candidat recherche : piscine (forme/couleur), couleur de toiture, empreinte du bâti, végétation distinctive. Réponds UNIQUEMENT en JSON valide : {"match_index":N,"confidence":0-100,"reason":"..."}. match_index = numéro du candidat (1-based), 0 si aucun match évident. confidence < 40 si incertain.` });
+    content.push({ type: "text", text: `Compare la photo de l'annonce avec les ${withAerials.length} vues aériennes. Critères : piscine, toiture, végétation. JSON UNIQUEMENT (reason < 20 mots) : {"match_index":N,"confidence":0-100,"reason":"..."}. match_index 1-based, 0=aucun. confidence<40 si incertain.` });
 
     try {
       const cr = await fetch("https://api.anthropic.com/v1/messages", {
@@ -183,8 +183,8 @@ export async function POST(req: NextRequest) {
           "anthropic-version": "2023-06-01"
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 300,
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 150,
           messages: [{ role: "user", content }]
         }),
         signal: AbortSignal.timeout(35000)
@@ -192,7 +192,10 @@ export async function POST(req: NextRequest) {
       if (cr.ok) {
         const cd = await cr.json();
         const txt: string = cd.content?.[0]?.text ?? "";
-        const m = txt.match(/\{[\s\S]*?\}/);
+        // Extraire le premier objet JSON complet (chercher la dernière } qui clôt le premier {)
+        const start = txt.indexOf("{");
+        const end = txt.lastIndexOf("}");
+        const m = start >= 0 && end > start ? [txt.slice(start, end+1)] : null;
         if (m) {
           try { visionResult = JSON.parse(m[0]); } catch {}
         }
