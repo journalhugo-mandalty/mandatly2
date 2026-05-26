@@ -217,6 +217,7 @@ export default function App() {
   const [radarLoading, setRadarLoading] = useState(false);
   const [radarDone, setRadarDone] = useState<Set<string>>(new Set());
   const [radarLetter, setRadarLetter] = useState("");
+  const [radarLetterLoading, setRadarLetterLoading] = useState(false);
   const [radarLetterTemplate, setRadarLetterTemplate] = useState("prospection");
   // Gamification
   const [courriersSent, setCourriersSent] = useState(()=>{
@@ -503,10 +504,39 @@ export default function App() {
       .sort((a,b)=>b.score-a.score)
       .slice(0,60);
     setRadarProspects(sorted);
-    if(sorted.length>0) setRadarLetter(generateLetter(sorted[0], radarLetterTemplate, agent));
     setRadarLoading(false);
+    if(sorted.length>0) generateRadarLetterFn(sorted[0], radarLetterTemplate);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radarVilles, radarDone, radarLetterTemplate, agent]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const generateRadarLetterFn = useCallback(async (p: Prospect, template: string) => {
+    setRadarLetterLoading(true);
+    setRadarLetter("");
+    const typeLabel = p.type_local || (p.source==="DPE"?"bien":"propriété");
+    const surfaceCtx = p.surface ? ` de ${p.surface} m²` : "";
+    const terrainCtx = p.terrain && p.terrain>0 ? ` avec ${p.terrain} m² de terrain` : "";
+    const ancCtx = p.anciennete ? ` acquis il y a ${p.anciennete} ans` : "";
+    const nomCtx = p.proprietaire_nom ? ` Le propriétaire identifié est ${p.proprietaire_nom}.` : "";
+    const prompts: Record<string,string> = {
+      prospection: `Rédige un courrier de prospection immobilière sobre et professionnel pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx}${ancCtx} au ${p.adresse}, ${p.ville}.${nomCtx} Tu représentes ${agent.prenom} ${agent.nom} de ${agent.agence}. 3 paragraphes. Commence OBLIGATOIREMENT par "Madame, Monsieur,".`,
+      relance: `Rédige un courrier de relance pour un propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx} au ${p.adresse}, ${p.ville} contacté il y a 3 semaines sans réponse.${nomCtx} Signe en tant que ${agent.prenom} ${agent.nom}, ${agent.agence}. 2 paragraphes. Commence par "Madame, Monsieur,".`,
+      offre: `Rédige un courrier informant le propriétaire d'${typeLabel.toLowerCase()}${surfaceCtx}${terrainCtx} au ${p.adresse}, ${p.ville} qu'un acquéreur sérieux avec financement confirmé recherche ce type de bien.${nomCtx} Signe: ${agent.prenom} ${agent.nom}, ${agent.agence}. Commence par "Madame, Monsieur,".`,
+    };
+    try {
+      const res = await fetch("/api/claude", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
+        system:`Tu es Lucas, assistant IA de ${agent.prenom} ${agent.nom} chez ${agent.agence}. Réponds uniquement avec le texte du courrier, sans introduction ni explication.`,
+        messages:[{role:"user",content:prompts[template]||prompts.prospection}],
+        max_tokens:600
+      })});
+      const d = await res.json();
+      const txt = d.content?.[0]?.text;
+      setRadarLetter(txt || generateLetter(p, template, agent));
+    } catch {
+      setRadarLetter(generateLetter(p, template, agent));
+    }
+    setRadarLetterLoading(false);
+  }, [agent]);
 
   const sendMsg = useCallback(async()=>{
     if(!input.trim()) return;
@@ -698,12 +728,12 @@ export default function App() {
             setCrmStatuses(s=>({...s,[String(radarCurrent.id)]:"envoye"}));
             setRadarDone(d=>new Set([...d,String(radarCurrent.id)]));
             const next = radarProspects[radarIdx+1];
-            if(next) setRadarLetter(generateLetter(next, radarLetterTemplate, agent));
+            if(next) generateRadarLetterFn(next, radarLetterTemplate);
             setRadarIdx(i=>i+1);
           };
           const skipCurrent = ()=>{
             const next = radarProspects[radarIdx+1];
-            if(next) setRadarLetter(generateLetter(next, radarLetterTemplate, agent));
+            if(next) generateRadarLetterFn(next, radarLetterTemplate);
             setRadarIdx(i=>i+1);
           };
           const dismissCurrent = ()=>{
@@ -711,7 +741,7 @@ export default function App() {
             setRadarDone(d=>new Set([...d,String(radarCurrent.id)]));
             setCrmStatuses(s=>({...s,[String(radarCurrent.id)]:"perdu"}));
             const next = radarProspects[radarIdx+1];
-            if(next) setRadarLetter(generateLetter(next, radarLetterTemplate, agent));
+            if(next) generateRadarLetterFn(next, radarLetterTemplate);
             setRadarIdx(i=>i+1);
           };
           return (
@@ -838,20 +868,23 @@ export default function App() {
                       </div>
                       <div style={{display:"flex",gap:4}}>
                         {[{id:"prospection",l:"Prosp."},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
-                          <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);setRadarLetter(generateLetter(radarCurrent,t.id,agent));}} style={{padding:"3px 9px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer"}}>{t.l}</button>
+                          <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(radarCurrent,t.id);}} style={{padding:"3px 9px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer"}}>{t.l}</button>
                         ))}
                       </div>
                     </div>
 
                     {/* Letter */}
                     <div style={{marginBottom:24}}>
-                      <div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8}}>Courrier personnalisé</div>
-                      <textarea value={radarLetter} onChange={e=>setRadarLetter(e.target.value)} rows={9} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,padding:"14px 16px",fontSize:12,lineHeight:1.7,fontFamily:BODY,resize:"vertical"}}/>
+                      <div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+                        Courrier personnalisé
+                        {radarLetterLoading&&<span style={{fontSize:9,color:C.gold,animation:"pulse 1s infinite",fontWeight:500}}>Génération en cours…</span>}
+                      </div>
+                      <textarea value={radarLetterLoading?"":radarLetter} onChange={e=>setRadarLetter(e.target.value)} rows={9} placeholder={radarLetterLoading?"Lucas rédige le courrier…":""} style={{width:"100%",background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:10,color:C.text,padding:"14px 16px",fontSize:12,lineHeight:1.7,fontFamily:BODY,resize:"vertical",transition:"border-color 0.3s"}}/>
                     </div>
 
                     {/* Action buttons */}
                     <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:10}}>
-                      <button onClick={validateCurrent} style={{background:C.green,color:"#fff",border:"none",borderRadius:10,padding:"13px",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"opacity 0.15s"}} onMouseOver={e=>e.currentTarget.style.opacity="0.85"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
+                      <button onClick={validateCurrent} disabled={radarLetterLoading||!radarLetter} style={{background:radarLetterLoading||!radarLetter?C.border:C.green,color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:10,padding:"13px",fontSize:13,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all 0.15s"}} onMouseOver={e=>{if(!radarLetterLoading&&radarLetter)e.currentTarget.style.opacity="0.85";}} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
                         Valider l&apos;envoi
                       </button>
                       <button onClick={skipCurrent} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px",fontSize:13,color:C.text,fontWeight:500,cursor:"pointer",transition:"opacity 0.15s"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
