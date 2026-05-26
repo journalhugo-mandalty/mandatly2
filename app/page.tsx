@@ -190,6 +190,9 @@ export default function App() {
   const [annoncesError, setAnnoncesError] = useState("");
   const [annoncesTypeFilter, setAnnoncesTypeFilter] = useState<""|"Maison"|"Appartement">("");
   const [annoncesSort, setAnnoncesSort] = useState<"prix_asc"|"prix_desc"|"surface_desc">("prix_asc");
+  const [selAnnonce, setSelAnnonce] = useState<any>(null);
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchResult, setMatchResult] = useState<any>(null);
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
@@ -484,6 +487,42 @@ export default function App() {
     } catch (err: any) { setAnnoncesError(err.message || "Erreur"); }
     setAnnoncesLoading(false);
   }, [annoncesLoading]);
+
+  const handleMatchAnnonce = useCallback(async (annonce: any) => {
+    if (!annonce?.lat || !annonce?.lng) return;
+    setMatchLoading(true); setMatchResult(null);
+    try {
+      // Fetch photos client-side (browser can download them, server cannot due to referer blocking)
+      const photos: string[] = [];
+      for (const url of (annonce.photos || []).slice(0, 3)) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength < 15000) continue;
+          const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+          photos.push(b64);
+          if (photos.length >= 2) break;
+        } catch {}
+      }
+      const r = await fetch("/api/match-annonce", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          lat: annonce.lat,
+          lng: annonce.lng,
+          surface: annonce.surface || 100,
+          type: annonce.type || "Maison",
+          photos,
+        }),
+      });
+      const d = await r.json();
+      setMatchResult(d);
+    } catch (e: any) {
+      setMatchResult({ error: e.message || "Erreur" });
+    }
+    setMatchLoading(false);
+  }, []);
 
   const loadRadar = useCallback(async () => {
     if (!radarVilles.length) return;
@@ -2262,74 +2301,156 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                   .filter(a=>!annoncesTypeFilter||a.type===annoncesTypeFilter)
                   .sort((a,b)=>annoncesSort==="prix_desc"?(b.prix||0)-(a.prix||0):annoncesSort==="surface_desc"?(b.surface||0)-(a.surface||0):(a.prix||0)-(b.prix||0));
                 return (
-                <>
-                  {/* Grid */}
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:24}}>
-                    {filtered.map(a=>{
-                      const prixM2 = a.prix && a.surface && a.surface > 0 ? Math.round(a.prix / a.surface) : null;
-                      return (
-                      <div key={a.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s"}} onMouseOver={e=>e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`} onMouseOut={e=>e.currentTarget.style.boxShadow="none"}>
-                        {/* Photo or placeholder */}
-                        {a.photos?.[0]?(
-                          <div style={{height:160,background:`url(${a.photos[0]}) center/cover no-repeat`,flexShrink:0,position:"relative"}}>
-                            {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
-                          </div>
-                        ):(
-                          <div style={{height:160,background:C.surface,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
-                            {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
-                            <span style={{fontSize:11,color:C.muted}}>Pas de photo</span>
-                          </div>
-                        )}
-                        <div style={{padding:"14px 16px"}}>
-                          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8,marginBottom:6}}>
-                            <div>
-                              <div style={{fontSize:15,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>
-                                {a.prix ? `${a.prix.toLocaleString("fr-FR")} €` : "Prix non communiqué"}
-                              </div>
-                              <div style={{fontSize:12,color:C.muted,marginTop:2}}>
-                                {a.surface ? `${a.surface} m²` : "?"}{a.pieces ? ` · ${a.pieces} p.` : ""}{prixM2 ? <span style={{color:C.amber,fontWeight:600}}> · {prixM2.toLocaleString("fr-FR")} €/m²</span> : ""}
-                              </div>
+                <div style={{display:"flex",gap:20,alignItems:"flex-start"}}>
+                  {/* Grid + portal links */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14,marginBottom:24}}>
+                      {filtered.map(a=>{
+                        const prixM2 = a.prix && a.surface && a.surface > 0 ? Math.round(a.prix / a.surface) : null;
+                        const isSel = selAnnonce?.id === a.id;
+                        return (
+                        <div key={a.id} onClick={()=>{setSelAnnonce(isSel?null:a);setMatchResult(null);}} style={{background:C.card,border:`1px solid ${isSel?C.accent:C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s,border-color 0.15s",cursor:"pointer",boxShadow:isSel?`0 0 0 2px ${C.accent}30`:undefined}} onMouseOver={e=>{if(!isSel)e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{if(!isSel)e.currentTarget.style.boxShadow="none";}}>
+                          {a.photos?.[0]?(
+                            <div style={{height:150,background:`url(${a.photos[0]}) center/cover no-repeat`,flexShrink:0,position:"relative"}}>
+                              {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
                             </div>
-                            <span style={{fontSize:10,background:a.type==="Maison"?C.green+"18":C.blue+"15",color:a.type==="Maison"?C.green:C.blue,border:`1px solid ${a.type==="Maison"?C.green+"35":C.blue+"30"}`,borderRadius:5,padding:"2px 7px",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-                              {a.type}
-                            </span>
-                          </div>
-                          <div style={{fontSize:12,color:C.muted,marginBottom:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                            {a.ville}{a.cp ? ` ${a.cp}` : ""}
-                          </div>
-                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
-                              {a.agence || "Particulier"}
+                          ):(
+                            <div style={{height:150,background:C.surface,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+                              {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
+                              <span style={{fontSize:11,color:C.muted}}>Pas de photo</span>
                             </div>
-                            {a.url&&(
-                              <a href={a.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:C.accent,fontWeight:600,textDecoration:"none",flexShrink:0,marginLeft:8}}>
-                                Voir →
-                              </a>
-                            )}
+                          )}
+                          <div style={{padding:"12px 14px"}}>
+                            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8,marginBottom:4}}>
+                              <div>
+                                <div style={{fontSize:14,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>
+                                  {a.prix ? `${a.prix.toLocaleString("fr-FR")} €` : "Prix NC"}
+                                </div>
+                                <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                                  {a.surface ? `${a.surface} m²` : "?"}{a.pieces ? ` · ${a.pieces} p.` : ""}{prixM2 ? <span style={{color:C.amber,fontWeight:600}}> · {prixM2.toLocaleString("fr-FR")} €/m²</span> : ""}
+                                </div>
+                              </div>
+                              <span style={{fontSize:10,background:a.type==="Maison"?C.green+"18":C.blue+"15",color:a.type==="Maison"?C.green:C.blue,border:`1px solid ${a.type==="Maison"?C.green+"35":C.blue+"30"}`,borderRadius:5,padding:"2px 6px",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+                                {a.type}
+                              </span>
+                            </div>
+                            <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                              {a.ville}{a.cp ? ` ${a.cp}` : ""}{a.agence ? ` · ${a.agence}` : ""}
+                            </div>
                           </div>
                         </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Portails concurrents</div>
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                        {[
+                          {name:"Barnes",url:`https://www.barnesparis.com/fr/nos-biens/vente/residentiels?query=${encodeURIComponent(annonceVille)}`},
+                          {name:"Belle Demeure",url:`https://www.belledemeure.com/annonces/vente/?localisation=${encodeURIComponent(annonceVille)}`},
+                          {name:"Sotheby's",url:`https://www.sothebysrealty.com/fre/rechercher/FRA/vente?q=${encodeURIComponent(annonceVille)}`},
+                          {name:"SeLoger",url:`https://www.seloger.com/list.htm?types=2,4&projects=2&enterprise=0&natures=1,2,4&localisation=${encodeURIComponent(annonceVille)}`},
+                          {name:"PAP",url:`https://www.pap.fr/annonce/ventes-maisons-appartements-${annonceVille.toLowerCase().replace(/\s+/g,"-")}`},
+                        ].map(p=>(
+                          <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:C.text,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",textDecoration:"none",fontWeight:500}}>
+                            {p.name} →
+                          </a>
+                        ))}
                       </div>
-                      );
-                    })}
-                  </div>
-                  {/* Portal links bar */}
-                  <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
-                    <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Portails concurrents à surveiller</div>
-                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                      {[
-                        {name:"Barnes",url:`https://www.barnesparis.com/fr/nos-biens/vente/residentiels?query=${encodeURIComponent(annonceVille)}`},
-                        {name:"Belle Demeure",url:`https://www.belledemeure.com/annonces/vente/?localisation=${encodeURIComponent(annonceVille)}`},
-                        {name:"Sotheby's",url:`https://www.sothebysrealty.com/fre/rechercher/FRA/vente?q=${encodeURIComponent(annonceVille)}`},
-                        {name:"SeLoger",url:`https://www.seloger.com/list.htm?types=2,4&projects=2&enterprise=0&natures=1,2,4&localisation=${encodeURIComponent(annonceVille)}`},
-                        {name:"PAP",url:`https://www.pap.fr/annonce/ventes-maisons-appartements-${annonceVille.toLowerCase().replace(/\s+/g,"-")}`},
-                      ].map(p=>(
-                        <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:C.text,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",textDecoration:"none",fontWeight:500}}>
-                          {p.name} →
-                        </a>
-                      ))}
                     </div>
                   </div>
-                </>
+                  {/* Detail panel */}
+                  {selAnnonce&&(
+                    <div style={{width:320,flexShrink:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20,position:"sticky",top:16}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Bien sélectionné</div>
+                        <button onClick={()=>{setSelAnnonce(null);setMatchResult(null);}} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1}}>×</button>
+                      </div>
+                      {selAnnonce.photos?.[0]&&(
+                        <div style={{height:160,background:`url(${selAnnonce.photos[0]}) center/cover no-repeat`,borderRadius:10,marginBottom:14}}/>
+                      )}
+                      <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>
+                        {selAnnonce.prix ? `${selAnnonce.prix.toLocaleString("fr-FR")} €` : "Prix NC"}
+                      </div>
+                      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>
+                        {selAnnonce.surface ? `${selAnnonce.surface} m²` : "?"}
+                        {selAnnonce.pieces ? ` · ${selAnnonce.pieces} pièces` : ""}
+                        {selAnnonce.type ? ` · ${selAnnonce.type}` : ""}
+                      </div>
+                      <div style={{fontSize:12,color:C.muted,marginBottom:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {selAnnonce.ville}{selAnnonce.cp ? ` ${selAnnonce.cp}` : ""}
+                        {selAnnonce.agence ? ` · ${selAnnonce.agence}` : ""}
+                      </div>
+                      {selAnnonce.url&&(
+                        <a href={selAnnonce.url} target="_blank" rel="noopener noreferrer" style={{display:"block",fontSize:12,color:C.accent,marginBottom:16,textDecoration:"none",fontWeight:600}}>
+                          Voir l'annonce →
+                        </a>
+                      )}
+                      {/* Identify button */}
+                      {!matchResult&&(
+                        <button
+                          disabled={matchLoading||(!selAnnonce.lat&&!selAnnonce.lng)}
+                          onClick={()=>handleMatchAnnonce(selAnnonce)}
+                          style={{width:"100%",background:matchLoading?C.border:C.accent,color:matchLoading?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:9,padding:"10px 0",fontSize:13,fontWeight:700,cursor:matchLoading||(!selAnnonce.lat&&!selAnnonce.lng)?"not-allowed":"pointer",letterSpacing:"-0.01em",transition:"background 0.15s"}}
+                        >
+                          {matchLoading?"Identification en cours...":"Identifier ce bien"}
+                        </button>
+                      )}
+                      {matchLoading&&(
+                        <div style={{marginTop:12,fontSize:11,color:C.muted,textAlign:"center",lineHeight:1.5}}>
+                          Comparaison cadastre + vue aérienne IGN + IA...
+                          <br/>~10 secondes
+                        </div>
+                      )}
+                      {/* Match result */}
+                      {matchResult&&!matchResult.error&&(
+                        <div style={{marginTop:4}}>
+                          <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Résultat</div>
+                          {matchResult.parcel&&(
+                            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
+                              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>
+                                Parcelle {matchResult.parcel.section}{matchResult.parcel.numero}
+                              </div>
+                              <div style={{fontSize:11,color:C.muted}}>
+                                {matchResult.parcel.contenance} m² · {matchResult.parcel.commune}
+                              </div>
+                              {matchResult.adresse&&(
+                                <div style={{fontSize:11,color:C.text,marginTop:4,fontWeight:500}}>{matchResult.adresse}</div>
+                              )}
+                            </div>
+                          )}
+                          {matchResult.owner?.nom?(
+                            <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
+                              <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:2}}>Proprietaire identifié</div>
+                              <div style={{fontSize:13,fontWeight:700,color:C.text}}>{matchResult.owner.nom}</div>
+                              {matchResult.owner.entreprise&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.entreprise}</div>}
+                            </div>
+                          ):(
+                            <div style={{fontSize:11,color:C.muted,marginBottom:10}}>
+                              Aucun propriétaire trouvé dans Sirene
+                              {matchResult.adresse&&<span style={{display:"block",marginTop:3,color:C.text,fontWeight:500}}>{matchResult.adresse}</span>}
+                            </div>
+                          )}
+                          {matchResult.vision_confidence!==null&&(
+                            <div style={{fontSize:11,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
+                              Confiance vision: {matchResult.vision_confidence}%
+                              {matchResult.vision_reason&&<span style={{display:"block",marginTop:1}}>{matchResult.vision_reason}</span>}
+                            </div>
+                          )}
+                          <button onClick={()=>setMatchResult(null)} style={{marginTop:10,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>
+                            Réessayer
+                          </button>
+                        </div>
+                      )}
+                      {matchResult?.error&&(
+                        <div style={{marginTop:8,fontSize:12,color:C.red}}>{matchResult.error}</div>
+                      )}
+                      {!selAnnonce.lat&&!selAnnonce.lng&&(
+                        <div style={{fontSize:11,color:C.muted,marginTop:8}}>Coordonnées GPS non disponibles pour ce bien.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
                 );
               })()}
             </div>
