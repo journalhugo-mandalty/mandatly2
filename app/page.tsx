@@ -65,9 +65,22 @@ async function lancerEstimation(type: string, surface: number, adresse: string, 
   };
 }
 
+type CrmStatus = "nouveau"|"courrier_pret"|"envoye"|"relance_prevue"|"interesse"|"estimation"|"mandat"|"perdu";
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; signature_request_id?:string; signature_status?:string; };
 type SignatureState = { loading:boolean; url?:string; error?:string; sandbox?:boolean; };
-type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; type_local?:string; surface?:number; terrain?:number; pieces?:number; };
+type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; type_local?:string; surface?:number; terrain?:number; pieces?:number; crm_status?:CrmStatus; };
+
+// Standalone letter generator (no API, no AI required)
+function generateLetter(p: Prospect, template: string, ag: {prenom:string;nom:string;agence:string}): string {
+  const t = p.type_local || (p.source==="DPE"?"bien":"propriété");
+  const sc = p.surface ? ` de ${p.surface} m²` : "";
+  const tc = p.terrain && p.terrain>0 ? ` avec ${p.terrain} m² de terrain` : "";
+  const sal = p.proprietaire_nom ? `${p.proprietaire_nom},` : "Madame, Monsieur,";
+  const sign = `Cordialement,\n${ag.prenom} ${ag.nom}\nAgent immobilier — ${ag.agence}`;
+  if(template==="relance") return `${sal}\n\nJe me permets de revenir vers vous suite à mon précédent courrier concernant votre ${t.toLowerCase()} au ${p.adresse}.\n\nNotre acquéreur est toujours très motivé par ce secteur et l'opportunité reste entière. Je reste disponible pour un échange sans obligation.\n\n${sign}`;
+  if(template==="offre") return `${sal}\n\nNous représentons un acquéreur sérieux, financement validé, à la recherche d'un ${t.toLowerCase()}${sc}${tc} dans votre quartier.\n\nVotre bien au ${p.adresse} correspond exactement à ses critères. Cette configuration représente une opportunité rare de conclure rapidement, au juste prix.\n\nNous sommes à votre disposition pour un premier échange confidentiel.\n\n${sign}`;
+  return `${sal}\n\n${ag.agence} est une agence immobilière reconnue dans le secteur de ${p.ville}. Nous intervenons régulièrement dans votre quartier et connaissons parfaitement les spécificités du marché local.\n\nVotre ${t.toLowerCase()}${sc} au ${p.adresse} retient notre attention. Nous accompagnons plusieurs acquéreurs sérieux, financement confirmé, à la recherche d'un bien de ce type dans ce secteur précis.\n\nNous vous proposons une estimation gratuite, confidentielle et sans engagement. Si vous envisagez une cession dans les mois à venir, il serait dommage de ne pas explorer ensemble cette opportunité.\n\n${sign}`;
+}
 type Acheteur = { id:number; nom:string; email:string; tel:string; budget_min:number; budget_max:number; surface_min:number; chambres_min:number; types:string[]; villes:string[]; notes:string; };
 type RDV = { id:number; titre:string; client:string; tel:string; date:string; heure:string; duree:number; type:string; bien:string; };
 type Msg = { id:number; role:"user"|"agent"; text:string; };
@@ -100,7 +113,7 @@ const fmt = (n:number) => n?.toLocaleString("fr-FR") || "0";
 
 export default function App() {
   const [dark, setDark] = useState(false);
-  const [nav, setNav] = useState("dashboard");
+  const [nav, setNav] = useState("radar");
   const [mandats, setMandats] = useState<Mandat[]>(()=>{
     if(typeof window==="undefined") return MANDATS;
     try{const s=localStorage.getItem("m_mandats");return s?JSON.parse(s):MANDATS;}catch{return MANDATS;}
@@ -193,6 +206,33 @@ export default function App() {
   const [stripeLoading, setStripeLoading] = useState(false);
   const [stripeMsg, setStripeMsg] = useState("");
   const [subStatus, setSubStatus] = useState<"active"|"trialing"|"inactive"|"">("");
+  // Radar — Mode 1 prospection automatique
+  const [radarVilles, setRadarVilles] = useState<string[]>(()=>{
+    if(typeof window==="undefined") return [];
+    try{return JSON.parse(localStorage.getItem("m_radar_villes")||"[]");}catch{return [];}
+  });
+  const [radarVilleInput, setRadarVilleInput] = useState("");
+  const [radarProspects, setRadarProspects] = useState<Prospect[]>([]);
+  const [radarIdx, setRadarIdx] = useState(0);
+  const [radarLoading, setRadarLoading] = useState(false);
+  const [radarDone, setRadarDone] = useState<Set<string>>(new Set());
+  const [radarLetter, setRadarLetter] = useState("");
+  const [radarLetterTemplate, setRadarLetterTemplate] = useState("prospection");
+  // Gamification
+  const [courriersSent, setCourriersSent] = useState(()=>{
+    if(typeof window==="undefined") return 0;
+    return parseInt(localStorage.getItem("m_sent_count")||"0");
+  });
+  const [mandatsFromProsp, setMandatsFromProsp] = useState(()=>{
+    if(typeof window==="undefined") return 0;
+    return parseInt(localStorage.getItem("m_mandats_prosp")||"0");
+  });
+  const [streakDays, setStreakDays] = useState(1);
+  // CRM statuses for all prospects (id → status)
+  const [crmStatuses, setCrmStatuses] = useState<Record<string,CrmStatus>>(()=>{
+    if(typeof window==="undefined") return {};
+    try{return JSON.parse(localStorage.getItem("m_crm_statuses")||"{}");}catch{return {};}
+  });
   const AGENT_DEFAULT = {prenom:"Jean",nom:"Dupont",agence:"Agence Prestige Immobilier",email:"jean@agence.fr"};
   const [agent, setAgent] = useState(()=>{
     if(typeof window==="undefined") return AGENT_DEFAULT;
@@ -209,6 +249,26 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("m_acheteurs",JSON.stringify(acheteurs));},[acheteurs]);
   useEffect(()=>{localStorage.setItem("m_rdvs",JSON.stringify(rdvs));},[rdvs]);
   useEffect(()=>{localStorage.setItem("m_courriers",JSON.stringify(courrierHisto));},[courrierHisto]);
+  useEffect(()=>{localStorage.setItem("m_radar_villes",JSON.stringify(radarVilles));},[radarVilles]);
+  useEffect(()=>{localStorage.setItem("m_crm_statuses",JSON.stringify(crmStatuses));},[crmStatuses]);
+  useEffect(()=>{localStorage.setItem("m_sent_count",String(courriersSent));},[courriersSent]);
+  useEffect(()=>{localStorage.setItem("m_mandats_prosp",String(mandatsFromProsp));},[mandatsFromProsp]);
+  // Streak calculation on mount
+  useEffect(()=>{
+    const today = new Date().toDateString();
+    const last = localStorage.getItem("m_last_visit");
+    const savedStreak = parseInt(localStorage.getItem("m_streak")||"1");
+    if(!last){setStreakDays(1);}
+    else if(last===today){setStreakDays(savedStreak);}
+    else{
+      const diff = Math.round((new Date(today).getTime()-new Date(last).getTime())/(86400000));
+      const newStreak = diff===1?savedStreak+1:1;
+      setStreakDays(newStreak);
+      localStorage.setItem("m_streak",String(newStreak));
+    }
+    localStorage.setItem("m_last_visit",today);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   // Stripe: handle return from checkout
   useEffect(()=>{
@@ -424,6 +484,30 @@ export default function App() {
     setAnnoncesLoading(false);
   }, [annoncesLoading]);
 
+  const loadRadar = useCallback(async () => {
+    if (!radarVilles.length) return;
+    setRadarLoading(true); setRadarProspects([]); setRadarIdx(0);
+    const all: Prospect[] = [];
+    for (const v of radarVilles) {
+      try {
+        const [dvfR, dpeR] = await Promise.allSettled([
+          fetch(`/api/dvf?ville=${encodeURIComponent(v)}`).then(r=>r.json()),
+          fetch(`/api/dpe?commune=${encodeURIComponent(v)}`).then(r=>r.json()),
+        ]);
+        if(dvfR.status==="fulfilled"&&!dvfR.value.error) all.push(...(dvfR.value.prospects||[]));
+        if(dpeR.status==="fulfilled"&&!dpeR.value.error) all.push(...(dpeR.value.prospects||[]));
+      } catch{}
+    }
+    const sorted = all
+      .filter(p=>!radarDone.has(String(p.id)))
+      .sort((a,b)=>b.score-a.score)
+      .slice(0,60);
+    setRadarProspects(sorted);
+    if(sorted.length>0) setRadarLetter(generateLetter(sorted[0], radarLetterTemplate, agent));
+    setRadarLoading(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [radarVilles, radarDone, radarLetterTemplate, agent]);
+
   const sendMsg = useCallback(async()=>{
     if(!input.trim()) return;
     const txt = input.trim();
@@ -532,7 +616,7 @@ export default function App() {
   );
 
   // MAIN APP
-  const NAVS = [{id:"dashboard",label:"Vue d'ensemble"},{id:"prospects",label:"Prospection"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
+  const NAVS = [{id:"radar",label:"Radar"},{id:"prospects",label:"Carte"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:BODY,color:C.text,overflow:"hidden"}}>
@@ -602,124 +686,199 @@ export default function App() {
       <div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
 
         {/* DASHBOARD */}
-        {nav==="dashboard"&&(
-          <div style={{flex:1,overflowY:"auto",padding:"32px 40px",animation:"fadeUp 0.3s ease"}}>
-            <div style={{marginBottom:36}}>
-              <div style={{fontSize:11,color:C.gold,fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:8}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</div>
-              <h1 style={{fontFamily:DISPLAY,fontSize:40,fontWeight:400,color:C.text,letterSpacing:"-0.01em",lineHeight:1.1,fontStyle:"italic"}}>Bonjour, {agent.prenom}</h1>
+        {nav==="radar"&&(()=>{
+          const radarCurrent = radarProspects[radarIdx] || null;
+          const radarTotal = radarProspects.length;
+          const toValidate = radarProspects.filter((_,i)=>i>=radarIdx).length;
+          const taux = courriersSent>0 ? ((mandatsFromProsp/courriersSent)*100).toFixed(1) : "0";
+          const validateCurrent = ()=>{
+            if(!radarCurrent) return;
+            setCourrierHisto(h=>[...h,{id:Date.now(),prospect_id:radarCurrent.id,prospect_adresse:radarCurrent.adresse,prospect_ville:radarCurrent.ville,date:new Date().toLocaleDateString("fr-FR"),template:radarLetterTemplate,statut:"envoye",content:radarLetter}]);
+            setCourriersSent(n=>n+1);
+            setCrmStatuses(s=>({...s,[String(radarCurrent.id)]:"envoye"}));
+            setRadarDone(d=>new Set([...d,String(radarCurrent.id)]));
+            const next = radarProspects[radarIdx+1];
+            if(next) setRadarLetter(generateLetter(next, radarLetterTemplate, agent));
+            setRadarIdx(i=>i+1);
+          };
+          const skipCurrent = ()=>{
+            const next = radarProspects[radarIdx+1];
+            if(next) setRadarLetter(generateLetter(next, radarLetterTemplate, agent));
+            setRadarIdx(i=>i+1);
+          };
+          const dismissCurrent = ()=>{
+            if(!radarCurrent) return;
+            setRadarDone(d=>new Set([...d,String(radarCurrent.id)]));
+            setCrmStatuses(s=>({...s,[String(radarCurrent.id)]:"perdu"}));
+            const next = radarProspects[radarIdx+1];
+            if(next) setRadarLetter(generateLetter(next, radarLetterTemplate, agent));
+            setRadarIdx(i=>i+1);
+          };
+          return (
+          <div style={{flex:1,overflowY:"auto",padding:"28px 36px",animation:"fadeUp 0.3s ease"}}>
+            {/* Header */}
+            <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:28}}>
+              <div>
+                <div style={{fontSize:11,color:C.gold,fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:6}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</div>
+                <h1 style={{fontFamily:DISPLAY,fontSize:36,fontWeight:400,color:C.text,letterSpacing:"-0.01em",lineHeight:1,fontStyle:"italic"}}>Bonjour, {agent.prenom}</h1>
+              </div>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                {streakDays>1&&<div style={{background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.amber}}>🔥 {streakDays} jours</div>}
+                <div style={{background:C.green+"12",border:`1px solid ${C.green}25`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.green}}>{courriersSent} envoyés</div>
+                {courriersSent>0&&<div style={{background:C.blue+"12",border:`1px solid ${C.blue}25`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.blue}}>{taux}% conv.</div>}
+              </div>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginBottom:32}}>
-              {[{l:"Mandats",v:mandats.length,sub:"actifs",nav:"mandats"},{l:"CA encaissé",v:fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))+" €",sub:`/ ${fmt(transacs.reduce((a,t)=>a+t.montant,0))} prévu`,nav:"compta"},{l:"Prospects",v:prospects.length,sub:"identifiés",nav:"prospects"},{l:"Courriers",v:courrierHisto.length,sub:`${courrierHisto.filter(h=>h.statut==="repondu").length} répondu(s)`,nav:"courriers"},{l:"Rendez-vous",v:rdvs.length,sub:"à venir",nav:"agenda"}].map(k=>(
-                <div key={k.l} onClick={()=>setNav((k as any).nav)} style={{...card(),padding:"20px 24px",cursor:"pointer",transition:"transform 0.15s, box-shadow 0.15s"}} onMouseOver={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow=`0 1px 3px ${C.shadow}`;}} >
-                  <div style={{fontSize:10,color:C.gold,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:10}}>{k.l}</div>
-                  <div style={{fontFamily:DISPLAY,fontSize:30,fontWeight:600,color:C.text,letterSpacing:"-0.01em",marginBottom:4,lineHeight:1}}>{k.v}</div>
-                  <div style={{fontSize:11,color:C.muted,letterSpacing:"0.01em"}}>{k.sub}</div>
+
+            {/* KPI row */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:32}}>
+              {[
+                {l:"Mandats",v:mandats.length,sub:"actifs",nav:"mandats",col:C.text},
+                {l:"Prospects",v:radarTotal||prospects.length,sub:"dans le radar",nav:"",col:C.text},
+                {l:"À valider",v:toValidate,sub:"courriers prêts",nav:"",col:toValidate>0?C.amber:C.muted},
+                {l:"Courriers",v:courriersSent,sub:"envoyés total",nav:"courriers",col:C.green},
+                {l:"CA encaissé",v:fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))+" €",sub:"honoraires",nav:"compta",col:C.gold},
+              ].map(k=>(
+                <div key={k.l} onClick={()=>k.nav&&setNav(k.nav as any)} style={{...card(),padding:"18px 20px",cursor:k.nav?"pointer":"default",transition:"transform 0.15s"}} onMouseOver={e=>{if(k.nav){e.currentTarget.style.transform="translateY(-2px)";}}} onMouseOut={e=>{e.currentTarget.style.transform="none";}}>
+                  <div style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:8}}>{k.l}</div>
+                  <div style={{fontFamily:DISPLAY,fontSize:26,fontWeight:600,color:k.col,letterSpacing:"-0.01em",lineHeight:1,marginBottom:4}}>{k.v}</div>
+                  <div style={{fontSize:10,color:C.muted}}>{k.sub}</div>
                 </div>
               ))}
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20,marginBottom:20}}>
-              <div style={{...card(),padding:"24px"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
-                  <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Mandats</div>
-                  <button onClick={()=>setNav("mandats")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Voir tout →</button>
-                </div>
-                {mandats.map((m,i)=>(
-                  <div key={m.id} onClick={()=>{setNav("mandats");setSelM(m);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<mandats.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
-                    <div style={{width:6,height:6,borderRadius:"50%",background:PIPELINE_COLS.find(p=>p.id===m.pipeline)?.color||C.muted,flexShrink:0}}/>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.nom_propriete}</div>
-                      <div style={{fontSize:11,color:C.muted}}>{m.proprietaire}</div>
-                    </div>
-                    <div style={{fontFamily:DISPLAY,fontSize:13,fontWeight:600,color:C.text,flexShrink:0}}>{fmt(m.prix)} €</div>
+
+            {/* Main content: config + queue */}
+            <div style={{display:"grid",gridTemplateColumns:"260px 1fr",gap:20,alignItems:"start"}}>
+
+              {/* LEFT: Radar config */}
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                <div style={{...card(),padding:"20px"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:C.text,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:14}}>Villes à prospecter</div>
+                  <div style={{display:"flex",gap:6,marginBottom:10}}>
+                    <input value={radarVilleInput} onChange={e=>setRadarVilleInput(e.target.value)}
+                      onKeyDown={e=>{if(e.key==="Enter"&&radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}}
+                      placeholder="Ex: Bordeaux" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:12}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    <button onClick={()=>{if(radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:7,padding:"7px 11px",fontSize:13,fontWeight:600,cursor:"pointer"}}>+</button>
                   </div>
-                ))}
-              </div>
-              <div style={{...card(),padding:"24px"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
-                  <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Prospects prioritaires</div>
-                  <button onClick={()=>setNav("prospects")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Prospecter →</button>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
+                    {radarVilles.map(v=>(
+                      <div key={v} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:C.text,display:"flex",alignItems:"center",gap:4}}>
+                        {v}
+                        <button onClick={()=>setRadarVilles(vs=>vs.filter(x=>x!==v))} style={{background:"none",border:"none",color:C.muted,fontSize:12,cursor:"pointer",padding:0,lineHeight:1}}>×</button>
+                      </div>
+                    ))}
+                    {radarVilles.length===0&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Aucune ville configurée</div>}
+                  </div>
+                  <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:8,padding:"10px",fontSize:13,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
+                    {radarLoading?"Analyse en cours...":"Lancer le radar"}
+                  </button>
                 </div>
-                {prospects.filter(p=>p.score>=75).slice(0,5).map((p,i,arr)=>{
-                  const col=p.score>=85?C.green:C.amber;
-                  return(
-                    <div key={p.id} onClick={()=>{setNav("prospects");setSelProspect(p as any);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${C.border}`:"none",cursor:"pointer"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
-                      <div style={{width:24,height:24,borderRadius:5,background:col+"15",border:`1px solid ${col}20`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,flexShrink:0}}>{p.score}</div>
+                {/* Progress */}
+                {radarTotal>0&&(
+                  <div style={{...card(),padding:"16px 20px"}}>
+                    <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Progression</div>
+                    <div style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:8}}>{Math.min(radarIdx,radarTotal)}<span style={{fontSize:13,color:C.muted,fontWeight:400}}>/{radarTotal}</span></div>
+                    <div style={{height:5,background:C.border,borderRadius:3}}>
+                      <div style={{width:`${(Math.min(radarIdx,radarTotal)/radarTotal)*100}%`,height:"100%",background:C.green,borderRadius:3,transition:"width 0.4s"}}/>
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,marginTop:6}}>{toValidate} opportunité{toValidate!==1?"s":""} restante{toValidate!==1?"s":""}</div>
+                  </div>
+                )}
+                {/* Recent actions */}
+                <div style={{...card(),padding:"16px 20px"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:C.text,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:12}}>Mandats</div>
+                  {mandats.slice(0,3).map((m,i)=>(
+                    <div key={m.id} onClick={()=>{setNav("mandats");setSelM(m);}} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:i<2?`1px solid ${C.border}`:"none",cursor:"pointer"}}>
+                      <div style={{width:5,height:5,borderRadius:"50%",background:PIPELINE_COLS.find(p=>p.id===m.pipeline)?.color||C.muted,flexShrink:0}}/>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse}</div>
-                        <div style={{fontSize:11,color:C.muted}}>{p.source}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {prospects.filter(p=>p.score>=75).length===0&&<div style={{fontSize:12,color:C.muted,textAlign:"center",paddingTop:16}}>Lancez une prospection DVF</div>}
-              </div>
-              <div style={{...card(),padding:"24px"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
-                  <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Agenda</div>
-                  <button onClick={()=>setNav("agenda")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Voir tout →</button>
-                </div>
-                {rdvs.sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4).map((r,i,arr)=>(
-                  <div key={r.id} style={{display:"flex",gap:12,padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${C.border}`:"none"}}>
-                    <div style={{width:3,minHeight:36,borderRadius:2,background:r.type==="visite"?C.green:r.type==="signature"?C.amber:C.blue,flexShrink:0,alignSelf:"stretch"}}/>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:12,fontWeight:500,color:C.text,marginBottom:1}}>{r.titre}</div>
-                      <div style={{fontSize:11,color:C.muted}}>{new Date(r.date+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})} · {r.heure}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {/* COURRIERS ROW */}
-            <div style={{...card(),padding:"24px"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-                <div style={{fontFamily:DISPLAY,fontSize:16,fontWeight:600,color:C.text,letterSpacing:"0.01em"}}>Suivi courriers</div>
-                <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",letterSpacing:"0.06em",fontWeight:500}}>Gérer →</button>
-              </div>
-              {courrierHisto.length===0?(
-                <div style={{textAlign:"center",padding:"16px 0",color:C.muted,fontSize:12}}>Aucun courrier envoyé — générez votre premier courrier dans l&apos;onglet Courriers</div>
-              ):(
-                <>
-                  {/* KPI mini-stats */}
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
-                    {[
-                      {l:"Envoyés",v:courrierHisto.length,color:C.blue},
-                      {l:"En attente",v:courrierHisto.filter(h=>h.statut==="envoye").length,color:C.amber},
-                      {l:"Répondus",v:courrierHisto.filter(h=>h.statut==="repondu").length,color:C.green},
-                    ].map(s=>(
-                      <div key={s.l} style={{background:s.color+"0D",border:`1px solid ${s.color}20`,borderRadius:10,padding:"12px 16px"}}>
-                        <div style={{fontSize:10,color:s.color,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{s.l}</div>
-                        <div style={{fontSize:24,fontWeight:700,color:s.color}}>{s.v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {/* Recent history */}
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:8}}>
-                    {["Adresse","Type","Date","Statut","Action"].map(h=>(
-                      <div key={h} style={{fontSize:10,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</div>
-                    ))}
-                  </div>
-                  {courrierHisto.slice(0,6).map(h=>(
-                    <div key={h.id} style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,padding:"9px 0",borderTop:`1px solid ${C.border}`,alignItems:"center"}}>
-                      <div style={{fontSize:12,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.prospect_adresse}</div>
-                      <div style={{fontSize:12,color:C.muted}}>{h.template==="prospection"?"Prospection":h.template==="relance"?"Relance":"Offre"}</div>
-                      <div style={{fontSize:12,color:C.muted}}>{h.date}</div>
-                      <div>
-                        <span style={{fontSize:10,fontWeight:600,color:h.statut==="repondu"?C.green:h.statut==="relance"?C.amber:C.blue,background:(h.statut==="repondu"?C.green:h.statut==="relance"?C.amber:C.blue)+"15",borderRadius:4,padding:"2px 7px"}}>
-                          {h.statut==="repondu"?"Répondu":h.statut==="relance"?"Relance":"Envoyé"}
-                        </span>
-                      </div>
-                      <div style={{display:"flex",gap:4}}>
-                        {h.statut==="envoye"&&<button onClick={()=>setCourrierHisto(hs=>hs.map(x=>x.id===h.id?{...x,statut:"repondu"}:x))} style={{fontSize:10,background:C.green+"15",color:C.green,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Répondu</button>}
-                        {h.statut==="envoye"&&<button onClick={()=>setCourrierHisto(hs=>hs.map(x=>x.id===h.id?{...x,statut:"relance"}:x))} style={{fontSize:10,background:C.amber+"15",color:C.amber,border:"none",borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Relancer</button>}
-                        {h.statut!=="envoye"&&<button onClick={()=>{setCourrier({prospect:{id:h.prospect_id,adresse:h.prospect_adresse,ville:h.prospect_ville,score:0,source:"DVF",status:"",notes:""},template:h.template==="relance"?"relance":"relance",content:"",loading:false});setNav("courriers");}} style={{fontSize:10,background:C.surface,border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Courrier →</button>}
+                        <div style={{fontSize:11,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.nom_propriete}</div>
+                        <div style={{fontSize:10,color:C.muted}}>{fmt(m.prix)} €</div>
                       </div>
                     </div>
                   ))}
-                </>
-              )}
+                  <button onClick={()=>setNav("mandats")} style={{marginTop:8,fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",padding:0}}>Voir tous →</button>
+                </div>
+              </div>
+
+              {/* RIGHT: Opportunity card or empty state */}
+              <div>
+                {!radarProspects.length&&!radarLoading&&(
+                  <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
+                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:12,fontStyle:"italic"}}>Votre radar de prospection</div>
+                    <div style={{fontSize:14,color:C.muted,marginBottom:24,lineHeight:1.6}}>Configurez vos villes cibles et lancez le radar.<br/>Le système détecte automatiquement les meilleures<br/>opportunités et prépare les courriers.</div>
+                    <div style={{display:"flex",justifyContent:"center",gap:8,flexWrap:"wrap",marginBottom:24}}>
+                      {["DVF — Ancienneté longue détention","DPE — Signaux de vente","Score propriété vendeur","Courrier prêt en 1 clic"].map(f=>(
+                        <div key={f} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:6,padding:"5px 10px",fontSize:11,color:C.text}}>{f}</div>
+                      ))}
+                    </div>
+                    {radarVilles.length>0?(
+                      <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+                        Lancer le radar sur {radarVilles.join(", ")}
+                      </button>
+                    ):(
+                      <div style={{fontSize:12,color:C.muted}}>Ajoutez une ville dans la configuration ci-contre</div>
+                    )}
+                  </div>
+                )}
+                {radarCurrent&&(
+                  <div style={{...card(),padding:"32px 36px",animation:"fadeUp 0.2s ease"}}>
+                    {/* Score + source */}
+                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20}}>
+                      <div>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                          {(()=>{const col=radarCurrent.score>=85?C.green:radarCurrent.score>=70?C.amber:C.red;return<div style={{fontSize:28,fontWeight:800,color:col,lineHeight:1,fontFamily:DISPLAY}}>{radarCurrent.score}</div>;})()}
+                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                            <span style={{fontSize:9,fontWeight:600,color:radarCurrent.source==="DPE"?C.amber:C.blue,background:(radarCurrent.source==="DPE"?C.amber:C.blue)+"15",border:`1px solid ${(radarCurrent.source==="DPE"?C.amber:C.blue)}30`,borderRadius:3,padding:"1px 5px",letterSpacing:"0.08em"}}>{radarCurrent.source}</span>
+                            {radarCurrent.proprietaire_nom&&<span style={{fontSize:9,fontWeight:600,color:C.gold,background:C.gold+"15",border:`1px solid ${C.gold}30`,borderRadius:3,padding:"1px 5px"}}>Propriétaire identifié</span>}
+                          </div>
+                        </div>
+                        <div style={{fontFamily:DISPLAY,fontSize:22,fontWeight:500,color:C.text,marginBottom:4,lineHeight:1.2}}>{radarCurrent.adresse}</div>
+                        <div style={{fontSize:13,color:C.muted,marginBottom:6}}>{radarCurrent.ville}</div>
+                        {radarCurrent.proprietaire_nom&&<div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:4}}>{radarCurrent.proprietaire_nom}</div>}
+                        <div style={{fontSize:12,color:C.muted}}>{radarCurrent.notes}</div>
+                      </div>
+                      <div style={{display:"flex",gap:4}}>
+                        {[{id:"prospection",l:"Prosp."},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
+                          <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);setRadarLetter(generateLetter(radarCurrent,t.id,agent));}} style={{padding:"3px 9px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer"}}>{t.l}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Letter */}
+                    <div style={{marginBottom:24}}>
+                      <div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8}}>Courrier personnalisé</div>
+                      <textarea value={radarLetter} onChange={e=>setRadarLetter(e.target.value)} rows={9} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,padding:"14px 16px",fontSize:12,lineHeight:1.7,fontFamily:BODY,resize:"vertical"}}/>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:10}}>
+                      <button onClick={validateCurrent} style={{background:C.green,color:"#fff",border:"none",borderRadius:10,padding:"13px",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"opacity 0.15s"}} onMouseOver={e=>e.currentTarget.style.opacity="0.85"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
+                        Valider l&apos;envoi
+                      </button>
+                      <button onClick={skipCurrent} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px",fontSize:13,color:C.text,fontWeight:500,cursor:"pointer",transition:"opacity 0.15s"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
+                        Passer →
+                      </button>
+                      <button onClick={dismissCurrent} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px",fontSize:13,color:C.muted,fontWeight:500,cursor:"pointer",transition:"opacity 0.15s"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
+                        Écarter
+                      </button>
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:10}}>
+                      {radarIdx+1} / {radarTotal} · {toValidate-1 >= 0 ? toValidate-1 : 0} restant{toValidate-1!==1?"s":""}
+                    </div>
+                  </div>
+                )}
+                {radarIdx>=radarTotal&&radarTotal>0&&(
+                  <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
+                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Radar terminé</div>
+                    <div style={{fontSize:14,color:C.muted,marginBottom:24}}>{radarIdx} opportunités traitées · {courriersSent} courriers validés</div>
+                    <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"12px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                      Relancer le radar
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          </div>);
+        })()}
 
         {/* STREET VIEW MODAL */}
         {svModal&&(
@@ -2291,7 +2450,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                 <div style={{fontSize:13,fontWeight:600,color:C.text}}>{agent.prenom} {agent.nom}</div>
                 <div style={{fontSize:12,color:C.muted}}>{agent.agence}</div>
               </div>
-              {[["Tableau de bord","dashboard"],["Prospection","prospects"],["Mandats","mandats"],["Comptabilité","compta"],["Estimation","estimation"],["Courriers","courriers"],["Agenda","agenda"]].map(([l,id])=>(
+              {[["Radar","radar"],["Carte","prospects"],["Mandats","mandats"],["Comptabilité","compta"],["Estimation","estimation"],["Courriers","courriers"],["Agenda","agenda"]].map(([l,id])=>(
                 <button key={l} onClick={()=>{setNav(id);setProfile(false);}} style={{width:"100%",display:"flex",padding:"8px 14px",background:"none",border:"none",color:C.text,fontSize:13,textAlign:"left",borderRadius:8,cursor:"pointer"}}>
                   {l}
                 </button>
