@@ -2301,18 +2301,35 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                   <div style={{fontFamily:DISPLAY,fontSize:22,fontStyle:"italic",color:C.text,marginBottom:8,textAlign:"center"}}>Aucune annonce</div>
                   <div style={{fontSize:13,color:C.muted,marginBottom:32,textAlign:"center"}}>Entrez une ville pour voir les biens actuellement en vente</div>
                   {/* Portal links */}
-                  <div style={{width:"100%",maxWidth:560}}>
-                    <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Autres portails</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                  <div style={{width:"100%",maxWidth:600}}>
+                    <div style={{fontSize:11,color:C.amber,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Prestige & Luxe</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:20}}>
                       {[
-                        {name:"SeLoger",url:"https://www.seloger.com/list.htm?types=2,4&projects=2&enterprise=0&natures=1,2,4&places=%5B{inseeCodes:['VILLE']}%5D"},
-                        {name:"Bien'ici",url:"https://www.bienici.com/recherche/achat/france"},
-                        {name:"Barnes",url:"https://www.barnesparis.com/fr/nos-biens/vente/residentiels"},
-                        {name:"Belle Demeure",url:"https://www.belledemeure.com/annonces/vente/maison/"},
-                        {name:"Sotheby's",url:"https://www.sothebysrealty.com/fre/rechercher/FRA/vente"},
-                        {name:"PAP",url:"https://www.pap.fr/annonce/ventes-maisons-appartements"},
+                        {name:"Barnes",url:"https://www.barnesparis.com/fr/recherche?typeannonce=vente"},
+                        {name:"Sotheby's Realty",url:"https://www.sothebysrealty.com/fra/buy/"},
+                        {name:"Savills",url:"https://www.savills.fr/property/recherche?Tenure=For+sale"},
+                        {name:"Collectionniste",url:"https://www.collectionniste.fr/achat/"},
+                        {name:"Knight Frank",url:"https://www.knightfrank.fr/proprietes-de-prestige/"},
+                        {name:"Belles Demeures",url:"https://www.belles-demeures.fr/annonces-immobilieres/vente/"},
+                        {name:"Green Acres",url:"https://www.green-acres.fr/fr/proprietes/a-vendre/france"},
+                        {name:"Propriétés Figaro",url:"https://immobilier.lefigaro.fr/annonces/annonces-vente.html"},
                       ].map(p=>(
-                        <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"10px 14px",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,fontSize:13,color:C.text,textDecoration:"none",fontWeight:500,transition:"all 0.15s"}}>
+                        <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:5,padding:"9px 12px",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,fontSize:12,color:C.text,textDecoration:"none",fontWeight:500}}>
+                          <span style={{fontSize:8,color:C.amber}}>★</span>{p.name} →
+                        </a>
+                      ))}
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Grands portails</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                      {[
+                        {name:"SeLoger",url:"https://www.seloger.com/list.htm?types=2,4&projects=2&enterprise=0&natures=1,2,4"},
+                        {name:"Bien'ici",url:"https://www.bienici.com/recherche/achat/france"},
+                        {name:"PAP",url:"https://www.pap.fr/annonce/ventes-maisons-appartements"},
+                        {name:"LeBonCoin",url:"https://www.leboncoin.fr/recherche?category=9"},
+                        {name:"Logic-immo",url:"https://www.logic-immo.com/vente-immobilier-france/"},
+                        {name:"MeilleursAgents",url:"https://www.meilleursagents.com/"},
+                      ].map(p=>(
+                        <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:"block",padding:"9px 12px",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,fontSize:12,color:C.muted,textDecoration:"none",fontWeight:500}}>
                           {p.name} →
                         </a>
                       ))}
@@ -2366,16 +2383,33 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                       })}
                     </div>
                     <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
-                      <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Portails concurrents</div>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Portails prestige & luxe</div>
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+                        {[
+                          {name:"Barnes",url:`https://www.barnesparis.com/fr/recherche?typeannonce=vente&localisation=${encodeURIComponent(annonceVille)}`},
+                          {name:"Sotheby's Realty",url:`https://www.sothebysrealty.com/fra/buy/${annonceVille.toLowerCase().replace(/\s+/g,"-")}-fra`},
+                          {name:"Savills",url:`https://www.savills.fr/property/recherche?Tenure=For+sale&ResidentialTypes=House,Flat&SearchList=${encodeURIComponent(annonceVille)}`},
+                          {name:"Collectionniste",url:`https://www.collectionniste.fr/achat/maison/${annonceVille.toLowerCase().replace(/\s+/g,"-").normalize("NFD").replace(/[̀-ͯ]/g,"")}/`},
+                          {name:"Knight Frank",url:`https://www.knightfrank.fr/proprietes-de-prestige/resultat?localisation=${encodeURIComponent(annonceVille)}&transaction=achat`},
+                          {name:"Belles Demeures",url:`https://www.belles-demeures.fr/annonces-immobilieres/vente/?localisation=${encodeURIComponent(annonceVille)}`},
+                          {name:"Green Acres",url:`https://www.green-acres.fr/fr/proprietes/a-vendre/france?keywords=${encodeURIComponent(annonceVille)}`},
+                          {name:"Propriétés Figaro",url:`https://immobilier.lefigaro.fr/annonces/annonces-vente.html?localisation_ville=${encodeURIComponent(annonceVille)}&localisation_type=ville&naturebien=maison,appartement`},
+                        ].map(p=>(
+                          <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:C.text,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",textDecoration:"none",fontWeight:500,display:"flex",alignItems:"center",gap:4}}>
+                            <span style={{fontSize:9,color:C.amber}}>★</span>{p.name} →
+                          </a>
+                        ))}
+                      </div>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Grands portails</div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                         {[
-                          {name:"Barnes",url:`https://www.barnesparis.com/fr/nos-biens/vente/residentiels?query=${encodeURIComponent(annonceVille)}`},
-                          {name:"Belle Demeure",url:`https://www.belledemeure.com/annonces/vente/?localisation=${encodeURIComponent(annonceVille)}`},
-                          {name:"Sotheby's",url:`https://www.sothebysrealty.com/fre/rechercher/FRA/vente?q=${encodeURIComponent(annonceVille)}`},
                           {name:"SeLoger",url:`https://www.seloger.com/list.htm?types=2,4&projects=2&enterprise=0&natures=1,2,4&localisation=${encodeURIComponent(annonceVille)}`},
-                          {name:"PAP",url:`https://www.pap.fr/annonce/ventes-maisons-appartements-${annonceVille.toLowerCase().replace(/\s+/g,"-")}`},
+                          {name:"PAP",url:`https://www.pap.fr/annonce/ventes-maisons-appartements-${annonceVille.toLowerCase().replace(/\s+/g,"-").normalize("NFD").replace(/[̀-ͯ]/g,"")}`},
+                          {name:"LeBonCoin",url:`https://www.leboncoin.fr/recherche?category=9&real_estate_type=1,2&locations=${encodeURIComponent(annonceVille)}`},
+                          {name:"Logic-immo",url:`https://www.logic-immo.com/vente-immobilier-${annonceVille.toLowerCase().replace(/\s+/g,"-").normalize("NFD").replace(/[̀-ͯ]/g,"")},5_1/`},
+                          {name:"MeilleursAgents",url:`https://www.meilleursagents.com/prix-immobilier/${annonceVille.toLowerCase().replace(/\s+/g,"-").normalize("NFD").replace(/[̀-ͯ]/g,"")}/`},
                         ].map(p=>(
-                          <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:C.text,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",textDecoration:"none",fontWeight:500}}>
+                          <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",textDecoration:"none",fontWeight:500}}>
                             {p.name} →
                           </a>
                         ))}
