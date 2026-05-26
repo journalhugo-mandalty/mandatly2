@@ -154,6 +154,9 @@ export default function App() {
   const [dragOver, setDragOver] = useState<string|null>(null);
   const [prospSecteur, setProspSecteur] = useState("");
   const [prospMethod, setProspMethod] = useState("");
+  const [banSugg, setBanSugg] = useState<{city:string;citycode:string;dept:string}[]>([]);
+  const [showSugg, setShowSugg] = useState(false);
+  const banDebounce = useRef<ReturnType<typeof setTimeout>|null>(null);
   const [profile, setProfile] = useState(false);
   // Estimation
   const [estForm, setEstForm] = useState({type:"Maison",surface:"",adresse:"",etat:"bon"});
@@ -436,7 +439,7 @@ export default function App() {
   }, []);
 
   // ── Prospection unifiée : DVF + DPE en parallèle avec statut par source
-  const handleProspect = useCallback(async (ville: string) => {
+  const handleProspect = useCallback(async (ville: string, insee?: string) => {
     if (!ville.trim()) return;
     setDvfLoading(true);
     setDvfError("");
@@ -444,12 +447,19 @@ export default function App() {
     setProspects([]);
     setSelProspects(new Set());
     setDvfStats(null);
+    setShowSugg(false);
     setSrcStatus({dvf:"loading", dpe:"loading", enrichir:"idle"});
 
-    // Lance DVF + DPE en parallèle
+    // Lance DVF + DPE en parallèle (passe l'INSEE direct si dispo → évite ambiguïté)
+    const dvfUrl = insee
+      ? `/api/dvf?ville=${encodeURIComponent(ville)}&insee=${encodeURIComponent(insee)}`
+      : `/api/dvf?ville=${encodeURIComponent(ville)}`;
+    const dpeUrl = insee
+      ? `/api/dpe?commune=${encodeURIComponent(ville)}&insee=${encodeURIComponent(insee)}`
+      : `/api/dpe?commune=${encodeURIComponent(ville)}`;
     const [dvfResult, dpeResult] = await Promise.allSettled([
-      fetch(`/api/dvf?ville=${encodeURIComponent(ville)}`).then(r => r.json()),
-      fetch(`/api/dpe?commune=${encodeURIComponent(ville)}`).then(r => r.json()),
+      fetch(dvfUrl).then(r => r.json()),
+      fetch(dpeUrl).then(r => r.json()),
     ]);
 
     const dvfData = dvfResult.status === "fulfilled" ? dvfResult.value : null;
@@ -1088,14 +1098,54 @@ export default function App() {
               <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
                 <div style={{fontFamily:DISPLAY,fontSize:17,fontWeight:500,color:C.text,marginBottom:2}}>Prospection</div>
                 <div style={{fontSize:11,color:C.muted,marginBottom:10}}>Identifie propriétaires · Noms en arrière-plan · Génère les courriers</div>
-                <div style={{display:"flex",gap:8,marginBottom:8}}>
-                  <input value={prospSecteur} onChange={e=>setProspSecteur(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter"&&!dvfLoading) handleProspect(prospSecteur);}}
-                    placeholder="Ex : 33000 ou Bordeaux..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13,fontFamily:BODY}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  <button disabled={dvfLoading||!prospSecteur} onClick={()=>handleProspect(prospSecteur)}
-                    style={{background:dvfLoading?C.border:C.accent,color:dvfLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontWeight:600,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0,transition:"all 0.15s"}}>
-                    {dvfLoading?"...":"Analyser"}
-                  </button>
+                <div style={{position:"relative",marginBottom:8}}>
+                  <div style={{display:"flex",gap:8}}>
+                    <input value={prospSecteur}
+                      onChange={e=>{
+                        const v=e.target.value; setProspSecteur(v);
+                        if(banDebounce.current) clearTimeout(banDebounce.current);
+                        if(v.length<2){setBanSugg([]);setShowSugg(false);return;}
+                        banDebounce.current=setTimeout(async()=>{
+                          try{
+                            const r=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(v)}&type=municipality&limit=8`);
+                            const d=await r.json();
+                            const items=(d.features||[]).map((f:any)=>({
+                              city:f.properties.city||f.properties.name,
+                              citycode:f.properties.citycode,
+                              dept:f.properties.context?.split(",")[1]?.trim()||f.properties.context||"",
+                            }));
+                            setBanSugg(items); setShowSugg(items.length>0);
+                          }catch{}
+                        },250);
+                      }}
+                      onKeyDown={e=>{
+                        if(e.key==="Escape"){setShowSugg(false);}
+                        if(e.key==="Enter"&&!dvfLoading){setShowSugg(false);handleProspect(prospSecteur);}
+                      }}
+                      onFocus={e=>{e.target.style.borderColor=C.text;if(banSugg.length>0)setShowSugg(true);}}
+                      onBlur={e=>{e.target.style.borderColor=C.border;setTimeout(()=>setShowSugg(false),150);}}
+                      placeholder="Ville, village, code postal..." style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 12px",fontSize:13,fontFamily:BODY}}/>
+                    <button disabled={dvfLoading||!prospSecteur} onClick={()=>{setShowSugg(false);handleProspect(prospSecteur);}}
+                      style={{background:dvfLoading?C.border:C.accent,color:dvfLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontWeight:600,cursor:dvfLoading?"not-allowed":"pointer",flexShrink:0,transition:"all 0.15s"}}>
+                      {dvfLoading?"...":"Analyser"}
+                    </button>
+                  </div>
+                  {showSugg&&banSugg.length>0&&(
+                    <div style={{position:"absolute",top:"100%",left:0,right:60,zIndex:200,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",marginTop:3,overflow:"hidden"}}>
+                      {banSugg.map((s,i)=>(
+                        <div key={i} onMouseDown={()=>{
+                          setProspSecteur(s.city);
+                          setBanSugg([]); setShowSugg(false);
+                          handleProspect(s.city, s.citycode);
+                        }} style={{padding:"8px 14px",cursor:"pointer",borderBottom:i<banSugg.length-1?`1px solid ${C.border}`:"none",display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                          onMouseEnter={e=>(e.currentTarget.style.background=C.surface)}
+                          onMouseLeave={e=>(e.currentTarget.style.background="transparent")}>
+                          <span style={{fontSize:13,color:C.text,fontWeight:500}}>{s.city}</span>
+                          <span style={{fontSize:11,color:C.muted}}>{s.dept}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {dvfError&&<div style={{fontSize:12,color:C.red,marginBottom:6}}>{dvfError}</div>}
                 {/* Per-source status */}

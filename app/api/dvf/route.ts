@@ -63,13 +63,28 @@ export async function GET(req: NextRequest) {
   try {
     let lat: number, lng: number, nomVille: string, inseeCode: string, dept: string;
 
-    // If insee+dept provided directly (geo-estimation), skip BAN geocoding
-    if (inseeParam && deptParam && !isNaN(addressLat) && !isNaN(addressLng)) {
-      lat = addressLat;
-      lng = addressLng;
+    // If insee provided directly (from autocomplete), skip BAN geocoding
+    if (inseeParam) {
       inseeCode = inseeParam;
-      dept = deptParam;
+      dept = inseeCode.slice(0, inseeCode.startsWith("97") ? 3 : 2);
       nomVille = ville || inseeParam;
+      // Still need lat/lng for response — geocode by INSEE if no coords provided
+      if (!isNaN(addressLat) && !isNaN(addressLng)) {
+        lat = addressLat; lng = addressLng;
+      } else {
+        try {
+          const banRes = await fetch(
+            `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(ville)}&citycode=${inseeCode}&type=municipality&limit=1`
+          );
+          const banData = await banRes.json();
+          if (banData.features?.length) {
+            [lng, lat] = banData.features[0].geometry.coordinates;
+            nomVille = banData.features[0].properties.city || ville;
+          } else {
+            lat = 0; lng = 0;
+          }
+        } catch { lat = 0; lng = 0; }
+      }
     } else {
       const banRes = await fetch(
         `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(ville)}&type=municipality&limit=1`
@@ -81,7 +96,7 @@ export async function GET(req: NextRequest) {
       [lng, lat] = banData.features[0].geometry.coordinates;
       nomVille = banData.features[0].properties.city || ville;
       inseeCode = banData.features[0].properties.citycode || "";
-      dept = inseeCode.slice(0, inseeCode.length === 5 ? 2 : 3);
+      dept = inseeCode.slice(0, inseeCode.startsWith("97") ? 3 : 2);
     }
 
     if (!inseeCode) {
