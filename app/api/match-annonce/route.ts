@@ -149,10 +149,17 @@ export async function POST(req: NextRequest) {
     withMeta.map(async c => ({ ...c, aerial: c.bbox ? await getIGNAerial(c.bbox) : null }))
   )).filter(c => c.aerial !== null);
 
-  // ── 4. Tenter de télécharger la photo de l'annonce ────────────────────────
+  // ── 4. Récupérer la photo de l'annonce (b64 direct ou URL) ──────────────
   let listingB64: string | null = null;
-  for (const url of photos.slice(0, 3)) {
-    listingB64 = await fetchPhotoB64(url);
+  for (const p of photos.slice(0, 3)) {
+    if (!p) continue;
+    // Client-side pre-fetched: raw base64 string (no data: prefix)
+    if (!p.startsWith("http")) {
+      if (p.length > 20000) { listingB64 = p; break; }
+      continue;
+    }
+    // URL: fetch server-side (works for public CDNs, not agency-blocked images)
+    listingB64 = await fetchPhotoB64(p);
     if (listingB64) break;
   }
 
