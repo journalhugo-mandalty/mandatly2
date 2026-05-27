@@ -22,13 +22,10 @@ export default function LoginPage() {
       router.push("/");
       router.refresh();
     } else {
-      const { error } = await supabase.auth.signUp({
-        email, password,
-        options: { emailRedirectTo: `${location.origin}/auth/callback` },
-      });
+      const { error } = await supabase.auth.signUp({ email, password });
       if (error) { setError(error.message); setLoading(false); return; }
-      setSuccess("Vérifiez votre email pour confirmer votre compte.");
-      setLoading(false);
+      router.push("/");
+      router.refresh();
     }
   };
 
