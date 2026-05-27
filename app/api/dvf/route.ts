@@ -109,16 +109,18 @@ export async function GET(req: NextRequest) {
     const years = [2021, 2022, 2023, 2024, 2025].filter(y => y <= curYear);
 
     let allTx: any[] = [];
-    for (const year of years) {
-      try {
+    // Fetch toutes les années en parallèle (pas de break anticipé qui fausse la diversité)
+    const csvResults = await Promise.allSettled(
+      years.map(async year => {
         const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/communes/${dept}/${inseeCode}.csv`;
         const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-        if (!res.ok) continue;
+        if (!res.ok) return [];
         const text = await res.text();
-        const rows = parseCSV(text);
-        allTx.push(...rows);
-        if (allTx.length >= 600 && mode === "prospects") break;
-      } catch {}
+        return parseCSV(text);
+      })
+    );
+    for (const r of csvResults) {
+      if (r.status === "fulfilled") allTx.push(...r.value);
     }
 
     // Estimation mode: geo-filtered comparables
@@ -222,9 +224,19 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Percentile scoring within the top 200 → scores spread 40-98
+    // Cap par année pour éviter qu'une seule année domine (max 60 par ancienneté)
     raw.sort((a, b) => b._signal - a._signal);
-    const slice200 = raw.slice(0, 200);
+    const countByAnc: Record<number, number> = {};
+    const balanced: typeof raw = [];
+    for (const p of raw) {
+      const a = p.anciennete as number;
+      if ((countByAnc[a] ?? 0) < 60) {
+        balanced.push(p);
+        countByAnc[a] = (countByAnc[a] ?? 0) + 1;
+      }
+      if (balanced.length >= 200) break;
+    }
+    const slice200 = balanced;
     const nSlice = slice200.length;
     const prospects = slice200.map((p, i) => {
       const percentile = nSlice > 1 ? 1 - i / (nSlice - 1) : 1;
