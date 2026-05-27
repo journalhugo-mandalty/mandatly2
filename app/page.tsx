@@ -531,6 +531,7 @@ export default function App() {
           lat: annonce.lat,
           lng: annonce.lng,
           surface: annonce.surface || 100,
+          terrain: annonce.terrain || 0,
           type: annonce.type || "Maison",
           photos,
         }),
@@ -2757,7 +2758,11 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                       {/* Match result */}
                       {matchResult&&!matchResult.error&&(
                         <div style={{marginTop:4}}>
-                          <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Résultat</div>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+                            <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Résultat</div>
+                            {matchResult.method==="dvf"&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>DVF — haute fiabilité</span>}
+                            {matchResult.method!=="dvf"&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                          </div>
                           {matchResult.parcel&&(
                             <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
                               <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>

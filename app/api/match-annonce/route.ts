@@ -165,6 +165,95 @@ async function reverseGeocode(lat: number, lng: number): Promise<string|null> {
   } catch { return null; }
 }
 
+// ── DVF cross-match ──────────────────────────────────────────────────────────
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function parseCSVRows(text: string): any[] {
+  const lines = text.split("\n");
+  const rows: any[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].trim().split(",");
+    if (c.length < 40) continue;
+    const type = c[30];
+    if (type !== "Maison" && type !== "Appartement") continue;
+    const lat2 = parseFloat(c[39]), lng2 = parseFloat(c[38]);
+    if (!lat2 || !lng2 || isNaN(lat2) || isNaN(lng2)) continue;
+    const surface = parseFloat(c[31]) || 0;
+    const terrain = parseFloat(c[37]) || 0;
+    if (!surface) continue;
+    rows.push({
+      adresse: `${c[5] || ""} ${c[7] || ""}`.trim(),
+      commune: c[11] || "",
+      type_local: type,
+      surface_bati: surface,
+      surface_terrain: terrain,
+      lat: lat2, lng: lng2,
+    });
+  }
+  return rows;
+}
+
+async function dvfCrossMatch(lat: number, lng: number, surface: number, terrain: number, type: string): Promise<{adresse:string;commune:string;lat:number;lng:number;surface_bati:number;surface_terrain:number;confidence:"high"|"medium"}|null> {
+  // Reverse geocode to get commune/dept
+  try {
+    const banRes = await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`, { signal: AbortSignal.timeout(6000) });
+    if (!banRes.ok) return null;
+    const banData = await banRes.json();
+    const feat = banData.features?.[0];
+    if (!feat) return null;
+    const insee = feat.properties.citycode || "";
+    const dept = insee.slice(0, insee.startsWith("97") ? 3 : 2);
+    if (!dept) return null;
+
+    // Fetch DVF for current and adjacent years
+    const years = [2022, 2023, 2024, 2025];
+    let allRows: any[] = [];
+    const csvResults = await Promise.allSettled(
+      years.map(async y => {
+        const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${y}/communes/${dept}/${insee}.csv`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!res.ok) return [];
+        return parseCSVRows(await res.text());
+      })
+    );
+    for (const r of csvResults) if (r.status === "fulfilled") allRows.push(...r.value);
+
+    // Filter by type + distance ≤1.5km + surface ±20%
+    const typeMatch = type === "Maison" ? "Maison" : "Appartement";
+    const candidates = allRows
+      .filter(r =>
+        r.type_local === typeMatch &&
+        r.surface_bati >= surface * 0.8 && r.surface_bati <= surface * 1.25 &&
+        haversineKm(lat, lng, r.lat, r.lng) <= 1.5
+      )
+      .map(r => ({ ...r, dist: haversineKm(lat, lng, r.lat, r.lng) }))
+      .sort((a, b) => a.dist - b.dist);
+
+    if (!candidates.length) return null;
+
+    // Add terrain filter if available
+    if (terrain > 0) {
+      const withTerrain = candidates.filter(r => r.surface_terrain > 0 && r.surface_terrain >= terrain * 0.7 && r.surface_terrain <= terrain * 1.4);
+      if (withTerrain.length === 1) return { ...withTerrain[0], confidence: "high" };
+      if (withTerrain.length >= 2 && withTerrain.length <= 3) return { ...withTerrain[0], confidence: "medium" };
+    }
+
+    // Without terrain: unique match at close range is reliable
+    const close = candidates.filter(r => r.dist <= 0.5);
+    if (close.length === 1) return { ...close[0], confidence: "high" };
+    if (candidates.length === 1) return { ...candidates[0], confidence: "medium" };
+
+    return null;
+  } catch { return null; }
+}
+
 // ── Route ────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -172,13 +261,34 @@ export async function POST(req: NextRequest) {
   if (!anthropicKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY manquante" }, { status: 503 });
 
   const body = await req.json();
-  const { lat, lng, surface = 100, type = "Maison", photos = [] }: {
-    lat: number; lng: number; surface: number; type: string; photos: string[];
+  const { lat, lng, surface = 100, terrain = 0, type = "Maison", photos = [] }: {
+    lat: number; lng: number; surface: number; terrain: number; type: string; photos: string[];
   } = body;
 
   if (!lat || !lng) return NextResponse.json({ error: "lat et lng requis" }, { status: 400 });
 
-  // ── 1. Toutes les parcelles dans le disque (~600m) ─────────────────────────
+  // ── 0. DVF cross-match (le plus fiable : adresse exacte) ──────────────────
+  const dvfMatch = await dvfCrossMatch(lat, lng, surface, terrain, type);
+  if (dvfMatch && dvfMatch.confidence === "high") {
+    const owner = await sireneOwner(dvfMatch.lat, dvfMatch.lng, dvfMatch.adresse + " " + dvfMatch.commune);
+    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${dvfMatch.lng}&lat=${dvfMatch.lat}`, { signal: AbortSignal.timeout(8000) });
+    let parcel = null;
+    if (parcelRes.ok) {
+      const pd = await parcelRes.json();
+      const f = pd.features?.[0];
+      if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
+    }
+    return NextResponse.json({
+      method: "dvf",
+      dvf_confidence: dvfMatch.confidence,
+      dvf_surface: dvfMatch.surface_bati,
+      dvf_terrain: dvfMatch.surface_terrain,
+      parcel, adresse: dvfMatch.adresse + (dvfMatch.commune ? ", " + dvfMatch.commune : ""),
+      owner, matched: true,
+    });
+  }
+
+  // ── 1. Toutes les parcelles dans le disque (~1km) ──────────────────────────
   const allParcels = await getIGNParcels(lat, lng);
 
   // ── 2. Filtrer par taille cohérente avec le type de bien ──────────────────
