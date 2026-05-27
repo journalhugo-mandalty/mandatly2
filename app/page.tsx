@@ -158,7 +158,10 @@ export default function App() {
   const [showSugg, setShowSugg] = useState(false);
   const banDebounce = useRef<ReturnType<typeof setTimeout>|null>(null);
   const [prospFilter, setProspFilter] = useState<"tous"|"dpe-recent"|"dpe-fg"|"dvf"|"contactes">("tous");
-  const [prospCrm, setProspCrm] = useState<Record<string,"contacte"|"repondu"|"sans_suite">>({});
+  const [prospCrm, setProspCrm] = useState<Record<string,"contacte"|"repondu"|"sans_suite">>(()=>{
+    if(typeof window==="undefined") return {};
+    try{return JSON.parse(localStorage.getItem("m_prosp_crm")||"{}");}catch{return {};}
+  });
   const [profile, setProfile] = useState(false);
   // Estimation
   const [estForm, setEstForm] = useState({type:"Maison",surface:"",adresse:"",etat:"bon"});
@@ -269,6 +272,7 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("m_courriers",JSON.stringify(courrierHisto));},[courrierHisto]);
   useEffect(()=>{localStorage.setItem("m_radar_villes",JSON.stringify(radarVilles));},[radarVilles]);
   useEffect(()=>{localStorage.setItem("m_crm_statuses",JSON.stringify(crmStatuses));},[crmStatuses]);
+  useEffect(()=>{localStorage.setItem("m_prosp_crm",JSON.stringify(prospCrm));},[prospCrm]);
   useEffect(()=>{localStorage.setItem("m_sent_count",String(courriersSent));},[courriersSent]);
   useEffect(()=>{localStorage.setItem("m_mandats_prosp",String(mandatsFromProsp));},[mandatsFromProsp]);
   // Streak calculation on mount
@@ -450,6 +454,7 @@ export default function App() {
     setSelProspects(new Set());
     setDvfStats(null);
     setShowSugg(false);
+    setProspFilter("tous");
     setSrcStatus({dvf:"loading", dpe:"loading", enrichir:"idle"});
 
     // Lance DVF + DPE en parallèle (passe l'INSEE direct si dispo → évite ambiguïté)
@@ -752,7 +757,7 @@ export default function App() {
   );
 
   // MAIN APP
-  const NAVS = [{id:"prospects",label:"Prospection"},{id:"radar",label:"Radar"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
+  const NAVS = [{id:"prospects",label:"Prospection"},{id:"radar",label:"Campagnes"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:BODY,color:C.text,overflow:"hidden"}}>
@@ -857,7 +862,7 @@ export default function App() {
               <div>
                 <div style={{fontSize:11,color:C.gold,fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:6}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</div>
                 <h1 style={{fontFamily:DISPLAY,fontSize:36,fontWeight:400,color:C.text,letterSpacing:"-0.01em",lineHeight:1,fontStyle:"italic"}}>Bonjour, {agent.prenom}</h1>
-                <div style={{fontSize:12,color:C.muted,marginTop:6}}>File de courriers — revue fiche par fiche, DPE F/G et anciens acquéreurs en tête</div>
+                <div style={{fontSize:12,color:C.muted,marginTop:6}}>Campagnes multi-villes — revue fiche par fiche, génération courrier individuelle</div>
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
                 {radarProspects.length>0&&(
@@ -915,7 +920,7 @@ export default function App() {
                     {radarVilles.length===0&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Aucune ville configurée</div>}
                   </div>
                   <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:8,padding:"10px",fontSize:13,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
-                    {radarLoading?"Analyse en cours...":"Lancer le radar"}
+                    {radarLoading?"Analyse en cours...":"Lancer la campagne"}
                   </button>
                 </div>
                 {/* Progress */}
@@ -964,9 +969,9 @@ export default function App() {
                 )}
                 {radarView==="cards"&&!radarProspects.length&&!radarLoading&&(
                   <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
-                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>File de courriers</div>
-                    <div style={{fontSize:13,color:C.muted,marginBottom:6,lineHeight:1.6}}>Configurez vos villes et lancez le Radar pour préparer<br/>vos courriers en mode revue (fiche par fiche).</div>
-                    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Pour explorer par carte, utilisez <button onClick={()=>setNav("prospects")} style={{background:"none",border:"none",color:C.gold,fontSize:12,cursor:"pointer",fontWeight:600,padding:0}}>Prospection →</button></div>
+                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Campagnes multi-villes</div>
+                    <div style={{fontSize:13,color:C.muted,marginBottom:6,lineHeight:1.6}}>Ajoutez plusieurs villes, lancez la campagne — vous passez ensuite chaque prospect en revue et générez les courriers un par un.</div>
+                    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Pour explorer une ville en détail avec la carte, utilisez <button onClick={()=>setNav("prospects")} style={{background:"none",border:"none",color:C.gold,fontSize:12,cursor:"pointer",fontWeight:600,padding:0}}>Prospection →</button></div>
                     <div style={{display:"flex",justifyContent:"center",gap:8,flexWrap:"wrap",marginBottom:24}}>
                       {["DVF — Ancienneté longue détention","DPE — Signaux de vente","Score propriété vendeur","Courrier prêt en 1 clic"].map(f=>(
                         <div key={f} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:6,padding:"5px 10px",fontSize:11,color:C.text}}>{f}</div>
@@ -974,7 +979,7 @@ export default function App() {
                     </div>
                     {radarVilles.length>0?(
                       <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-                        Lancer le radar sur {radarVilles.join(", ")}
+                        Lancer la campagne sur {radarVilles.join(", ")}
                       </button>
                     ):(
                       <div style={{fontSize:12,color:C.muted}}>Ajoutez une ville dans la configuration ci-contre</div>
@@ -1061,10 +1066,10 @@ export default function App() {
                 )}
                 {radarIdx>=radarTotal&&radarTotal>0&&(
                   <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
-                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Radar terminé</div>
+                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Campagne terminée</div>
                     <div style={{fontSize:14,color:C.muted,marginBottom:24}}>{radarIdx} opportunités traitées · {courriersSent} courriers validés</div>
                     <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"12px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
-                      Relancer le radar
+                      Relancer la campagne
                     </button>
                   </div>
                 )}
@@ -1095,7 +1100,7 @@ export default function App() {
         {nav==="prospects"&&(
           <div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
             {/* LEFT PANEL */}
-            <div style={{width:340,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",background:C.surface,flexShrink:0}}>
+            <div style={{width:380,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",background:C.surface,flexShrink:0}}>
               {/* Search header */}
               <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
                 <div style={{fontFamily:DISPLAY,fontSize:17,fontWeight:500,color:C.text,marginBottom:2}}>Prospection</div>
@@ -1209,13 +1214,22 @@ export default function App() {
                       if(!ps.length) return;
                       setMfSending(true); setMfResult(null);
                       let ok=0, err=0;
+                      const sentIds: string[] = [];
                       for(const p of ps){
                         const cpMatch = p.adresse.match(/\b(\d{5})\b/)||p.ville?.match(/\d{5}/);
                         const cp = cpMatch?.[1]||cpMatch?.[0]||"33000";
                         const villeClean = p.ville?.replace(/\d{5}\s*/,"").trim()||p.ville;
                         const sal = getSalutation(p);
                         const typeLabel = p.type_local||(p.source==="DPE"?"bien":"bien");
-                        const content = `${sal}\n\n${agent.agence} est spécialisée dans les transactions immobilières de votre secteur. Nous connaissons parfaitement votre quartier et le marché local.\n\nVotre ${typeLabel.toLowerCase()} au ${p.adresse} retient notre attention. Nous disposons d'acquéreurs sérieux, avec financement validé, à la recherche d'un bien de ce type dans ce secteur précis.\n\nNous vous proposons une estimation gratuite et confidentielle, sans engagement de votre part.\n\nCordialement,\n${agent.prenom} ${agent.nom}\nAgent immobilier — ${agent.agence}`;
+                        const isDpe = p.source==="DPE";
+                        const isDpeFG = isDpe && (p.classe_dpe==="F"||p.classe_dpe==="G");
+                        // Angle différencié selon le signal
+                        const para2 = isDpeFG
+                          ? `La réglementation énergétique actuelle transforme profondément le marché immobilier dans votre secteur. Si vous souhaitez connaître la valeur de votre ${typeLabel.toLowerCase()} au ${p.adresse} ou envisagez un projet dans les prochains mois, nous serions heureux de vous accompagner.`
+                          : isDpe
+                          ? `Le marché immobilier de ${p.ville} est particulièrement actif en ce moment, et votre ${typeLabel.toLowerCase()} au ${p.adresse} suscite l'intérêt de nos acquéreurs. Si vous avez un projet — même lointain — nous pouvons vous proposer une évaluation confidentielle et sans engagement.`
+                          : `Votre ${typeLabel.toLowerCase()} au ${p.adresse} retient notre attention. Nous accompagnons plusieurs acquéreurs sérieux, avec financement confirmé, à la recherche d'un bien de ce type dans ce secteur précis.`;
+                        const content = `${sal}\n\n${agent.agence} est une agence immobilière active dans le secteur de ${p.ville}. Nous connaissons parfaitement les spécificités du marché local et intervenons régulièrement dans votre quartier.\n\n${para2}\n\nNous vous proposons une estimation gratuite, confidentielle et sans engagement de votre part.\n\nCordialement,\n${agent.prenom} ${agent.nom}\nAgent immobilier — ${agent.agence}`;
                         const r = await fetch("/api/merci-facteur",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
                           dest_nom: p.proprietaire_nom||"Occupant",
                           dest_adresse: p.adresse,
@@ -1225,13 +1239,15 @@ export default function App() {
                           exp_adresse:agent.email,
                           content,
                         })});
-                        (await r.json()).ok ? ok++ : err++;
+                        if((await r.json()).ok){ ok++; sentIds.push(String(p.id)); } else err++;
                       }
                       setMfSending(false);
                       setMfResult({ok,err});
                       if(ok>0){
+                        // Marquer automatiquement comme "contacté"
+                        setProspCrm(s=>{const n={...s};sentIds.forEach(id=>{n[id]="contacte";});return n;});
                         const now = new Date().toISOString().slice(0,10);
-                        const newHisto = prospects.filter(p=>selProspects.has(p.id)).map(p=>({
+                        const newHisto = prospects.filter(p=>sentIds.includes(String(p.id))).map(p=>({
                           id:Date.now()+Math.random(), prospect_id:p.id,
                           prospect_adresse:p.adresse, prospect_ville:p.ville,
                           date:now, template:"prospection", statut:"envoye" as const,
@@ -1466,14 +1482,20 @@ export default function App() {
 
               {/* Footer */}
               {prospects.length>0&&(
-                <div style={{padding:"8px 16px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:C.card}}>
-                  <span style={{fontSize:11,color:C.muted}}>
+                <div style={{padding:"8px 14px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:C.card,gap:6}}>
+                  <span style={{fontSize:11,color:C.muted,flex:1,minWidth:0}}>
                     {selProspects.size>0
                       ? <><span style={{color:C.gold,fontWeight:600}}>{selProspects.size} sélectionné{selProspects.size>1?"s":""}</span> · <button onClick={()=>setSelProspects(new Set())} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",padding:0}}>Effacer</button></>
                       : <>{prospects.length} prospects · {Object.keys(prospCrm).filter(k=>prospects.find(p=>String(p.id)===k)).length} contactés</>
                     }
                   </span>
-                  <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",fontWeight:500,padding:0}}>Suivi courriers →</button>
+                  {prospSecteur&&!radarVilles.includes(prospSecteur)&&(
+                    <button onClick={()=>{setRadarVilles(v=>[...v,prospSecteur]);}} title="Ajouter à la liste Campagnes pour suivi multi-villes"
+                      style={{fontSize:10,color:C.muted,background:"transparent",border:`1px solid ${C.border}`,borderRadius:5,padding:"2px 7px",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                      + Campagnes
+                    </button>
+                  )}
+                  <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",fontWeight:500,padding:0,whiteSpace:"nowrap",flexShrink:0}}>Suivi →</button>
                 </div>
               )}
             </div>
