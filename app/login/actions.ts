@@ -11,7 +11,10 @@ export async function login(email: string, password: string): Promise<string | n
 
 export async function signup(email: string, password: string): Promise<string | null> {
   const supabase = await createClient();
-  const { error } = await supabase.auth.signUp({ email, password });
+  const { error } = await supabase.auth.signUp({
+    email, password,
+    options: { emailRedirectTo: "https://mandatly2.vercel.app/" },
+  });
   if (error) return error.message;
   redirect("/");
 }
