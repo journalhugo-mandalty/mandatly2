@@ -205,8 +205,9 @@ function aggregateMutations(text: string): any[] {
 }
 
 type DvfMatch = { adresse:string; commune:string; lat:number; lng:number; surface_bati:number; surface_terrain:number; confidence:"high"|"medium"; candidates?: DvfMatch[] };
+type DvfPool = { match: DvfMatch|null; allTypePool: any[] };
 
-async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number, surface: number, terrain: number, type: string): Promise<DvfMatch|null> {
+async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number, surface: number, terrain: number, type: string): Promise<DvfPool> {
   try {
     // Utiliser ville+CP pour trouver l'INSEE (coordonnées Bien'ici = centroïde flou, inutilisable)
     let insee = "", dept = "";
@@ -226,7 +227,7 @@ async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number
         if (f) { insee = f.properties.citycode || ""; dept = insee.slice(0, insee.startsWith("97") ? 3 : 2); }
       }
     }
-    if (!insee || !dept) return null;
+    if (!insee || !dept) return { match: null, allTypePool: [] };
 
     // Fetch DVF 2021-2025, agréger par mutation
     const years = [2021, 2022, 2023, 2024, 2025];
@@ -242,6 +243,8 @@ async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number
     for (const r of csvResults) if (r.status === "fulfilled") allMuts.push(...r.value);
 
     const typeMatch = type === "Maison" ? "Maison" : "Appartement";
+    // Tout le pool du bon type (pour Vision IA fallback avec vraies coordonnées DVF)
+    const allTypePool = allMuts.filter(r => r.type_local === typeMatch && r.lat && r.lng);
 
     // Surface habitable Bien'ici ≈ 75-95% de la surface bâtie DVF → tolérance large
     const sMin = surface * 0.75, sMax = surface * 1.35;
@@ -251,19 +254,19 @@ async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number
     if (terrain > 100) {
       const tMin = terrain * 0.70, tMax = terrain * 1.40;
       const withT = pool.filter(r => r.surface_terrain >= tMin && r.surface_terrain <= tMax);
-      if (withT.length === 1) return { ...withT[0], confidence: "high" };
+      if (withT.length === 1) return { match: { ...withT[0], confidence: "high" }, allTypePool };
       if (withT.length >= 2 && withT.length <= 5) {
-        return { ...withT[0], confidence: "medium", candidates: withT };
+        return { match: { ...withT[0], confidence: "medium", candidates: withT }, allTypePool };
       }
     }
 
     // Sans terrain ou terrain trop commun : unicité dans la commune
-    if (pool.length === 1) return { ...pool[0], confidence: "high" };
+    if (pool.length === 1) return { match: { ...pool[0], confidence: "high" }, allTypePool };
     if (pool.length >= 2 && pool.length <= 4) {
-      return { ...pool[0], confidence: "medium", candidates: pool };
+      return { match: { ...pool[0], confidence: "medium", candidates: pool }, allTypePool };
     }
-    return null;
-  } catch { return null; }
+    return { match: null, allTypePool };
+  } catch { return { match: null, allTypePool: [] }; }
 }
 
 // ── Route ────────────────────────────────────────────────────────────────────
@@ -283,16 +286,24 @@ export async function POST(req: NextRequest) {
   const geoportailUrl = `https://www.geoportail.gouv.fr/carte?c=${lng},${lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
 
   // ── 0. DVF cross-match (le plus fiable : adresse exacte) ──────────────────
-  const dvfMatch = await dvfCrossMatch(ville, cp, lat, lng, surface, terrain, type);
+  const dvfPool = await dvfCrossMatch(ville, cp, lat, lng, surface, terrain, type);
+  const dvfMatch = dvfPool.match;
+
   if (dvfMatch && dvfMatch.confidence === "high") {
-    const owner = await sireneOwner(dvfMatch.lat, dvfMatch.lng, dvfMatch.adresse + " " + dvfMatch.commune);
-    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${dvfMatch.lng}&lat=${dvfMatch.lat}`, { signal: AbortSignal.timeout(8000) });
+    const [owner, parcelRes] = await Promise.all([
+      sireneOwner(dvfMatch.lat, dvfMatch.lng, dvfMatch.adresse + " " + dvfMatch.commune),
+      fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${dvfMatch.lng}&lat=${dvfMatch.lat}`, { signal: AbortSignal.timeout(8000) }),
+    ]);
     let parcel = null;
     if (parcelRes.ok) {
       const pd = await parcelRes.json();
       const f = pd.features?.[0];
       if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
     }
+    // Géoportail centré sur les VRAIES coordonnées DVF (pas le centroïde flou)
+    const dvfGeoportailUrl = dvfMatch.lat
+      ? `https://www.geoportail.gouv.fr/carte?c=${dvfMatch.lng},${dvfMatch.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`
+      : geoportailUrl;
     return NextResponse.json({
       method: "dvf",
       dvf_confidence: dvfMatch.confidence,
@@ -300,140 +311,124 @@ export async function POST(req: NextRequest) {
       dvf_terrain: dvfMatch.surface_terrain,
       dvf_candidates: dvfMatch.candidates?.map(c => ({ adresse: c.adresse + (c.commune ? ", " + c.commune : ""), surface_bati: c.surface_bati, surface_terrain: c.surface_terrain })),
       parcel, adresse: dvfMatch.adresse + (dvfMatch.commune ? ", " + dvfMatch.commune : ""),
-      owner, matched: true, geoportailUrl,
+      owner, matched: true, geoportailUrl: dvfGeoportailUrl,
     });
   }
 
-  // ── 1. Toutes les parcelles dans le disque (~1km) ──────────────────────────
-  const allParcels = await getIGNParcels(lat, lng);
-
-  // ── 2. Filtrer par taille cohérente avec le type de bien ──────────────────
-  const isMaison = type === "Maison" || type === "Villa";
-  const minC = isMaison ? Math.max(surface * 1.2, 150) : 30;
-  const maxC = isMaison ? surface * 35 : surface * 5;
-
-  const candidates = allParcels
-    .filter(p => {
-      const c = p.properties?.contenance ?? 0;
-      return c >= minC && c <= maxC;
-    })
-    .slice(0, 7);
-
-  // ── 3. Vue aérienne IGN pour chaque candidat ──────────────────────────────
-  const withMeta = candidates.map(p => ({
-    section: p.properties?.section ?? "",
-    numero: p.properties?.numero ?? "",
-    contenance: p.properties?.contenance ?? 0,
-    commune: p.properties?.nom_com ?? "",
-    bbox: parcelBbox(p),
-    center: parcelCenter(p),
-    feature: p,
-  }));
-
-  const withAerials = (await Promise.all(
-    withMeta.map(async c => ({ ...c, aerial: c.bbox ? await getIGNAerial(c.bbox) : null }))
-  )).filter(c => c.aerial !== null);
-
-  // ── 4. Récupérer la photo de l'annonce (b64 direct ou URL) ──────────────
+  // ── 1. Récupérer la photo de l'annonce ─────────────────────────────────────
   let listingB64: string | null = null;
   for (const p of photos.slice(0, 3)) {
     if (!p) continue;
-    // Client-side pre-fetched: raw base64 string (no data: prefix)
     if (!p.startsWith("http")) {
       if (p.length > 20000) { listingB64 = p; break; }
       continue;
     }
-    // URL: fetch server-side (works for public CDNs, not agency-blocked images)
     listingB64 = await fetchPhotoB64(p);
     if (listingB64) break;
   }
 
-  // ── 5. Claude Vision : matching photo annonce ↔ vues aériennes ────────────
+  // ── 2. Vision IA sur locations DVF (vraies coordonnées GPS) ─────────────
+  // Les coords Bien'ici sont un centroïde de ville — inutilisables pour IGN.
+  // À la place on utilise les positions RÉELLES des mutations DVF de la commune.
+  const dvfTypePool = dvfPool.allTypePool;
   let visionResult: { match_index: number; confidence: number; reason: string } | null = null;
+  type DvfCandidate = { adresse: string; commune: string; surface_bati: number; surface_terrain: number; lat: number; lng: number; aerial?: string | null };
+  let dvfVisionCandidates: DvfCandidate[] = [];
 
-  if (listingB64 && withAerials.length > 0) {
-    const content: any[] = [];
+  if (listingB64 && dvfTypePool.length > 0) {
+    // Trier les mutations par proximité de surface (sans exclure trop fortement)
+    const sorted = [...dvfTypePool]
+      .filter(r => r.surface_bati >= surface * 0.55 && r.surface_bati <= surface * 1.80)
+      .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
+      .slice(0, 6);
 
-    // Photo de l'annonce
-    content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: listingB64 } });
-    content.push({ type: "text", text: `Photo d'une annonce : ${type} d'environ ${surface}m², secteur Golfe de Saint-Tropez.` });
+    // Vue aérienne IGN à chaque coordonnée DVF réelle
+    const aerialResults = await Promise.all(
+      sorted.map(async r => {
+        // bbox ~80m autour du point DVF
+        const pad = 0.0006;
+        const bbox = `${r.lng - pad},${r.lat - pad},${r.lng + pad},${r.lat + pad}`;
+        return { ...r, aerial: await getIGNAerial(bbox) };
+      })
+    );
+    dvfVisionCandidates = aerialResults.filter(r => r.aerial);
 
-    // Une vue aérienne par candidat
-    withAerials.forEach((c, i) => {
-      content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: c.aerial! } });
-      content.push({ type: "text", text: `Candidat ${i+1} — parcelle ${c.section}${c.numero} (${c.contenance}m², ${c.commune})` });
-    });
+    if (dvfVisionCandidates.length > 0) {
+      const content: any[] = [];
+      content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: listingB64 } });
+      content.push({ type: "text", text: `Photo d'une annonce immobilière : ${type} ~${surface}m², commune de ${ville}.` });
 
-    content.push({ type: "text", text: `Compare la photo de l'annonce avec les ${withAerials.length} vues aériennes. Critères : piscine, toiture, végétation. JSON UNIQUEMENT (reason < 20 mots) : {"match_index":N,"confidence":0-100,"reason":"..."}. match_index 1-based, 0=aucun. confidence<40 si incertain.` });
-
-    try {
-      const cr = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": anthropicKey,
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 150,
-          messages: [{ role: "user", content }]
-        }),
-        signal: AbortSignal.timeout(35000)
+      dvfVisionCandidates.forEach((c, i) => {
+        content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: c.aerial! } });
+        content.push({ type: "text", text: `Vue satellite candidat ${i+1} : ${c.adresse} (${c.surface_bati}m² bâti)` });
       });
-      if (cr.ok) {
-        const cd = await cr.json();
-        const txt: string = cd.content?.[0]?.text ?? "";
-        // Extraire le premier objet JSON complet (chercher la dernière } qui clôt le premier {)
-        const start = txt.indexOf("{");
-        const end = txt.lastIndexOf("}");
-        const m = start >= 0 && end > start ? [txt.slice(start, end+1)] : null;
-        if (m) {
-          try { visionResult = JSON.parse(m[0]); } catch {}
+
+      content.push({ type: "text", text: `Compare la photo de l'annonce aux ${dvfVisionCandidates.length} vues satellites. Critères : piscine, toiture, végétation, forme du bâtiment. JSON UNIQUEMENT (reason < 20 mots) : {"match_index":N,"confidence":0-100,"reason":"..."}. match_index 1-based, 0=aucun. confidence<40 si incertain.` });
+
+      try {
+        const cr = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 150, messages: [{ role: "user", content }] }),
+          signal: AbortSignal.timeout(40000),
+        });
+        if (cr.ok) {
+          const cd = await cr.json();
+          const txt: string = cd.content?.[0]?.text ?? "";
+          const start = txt.indexOf("{"), end = txt.lastIndexOf("}");
+          if (start >= 0 && end > start) { try { visionResult = JSON.parse(txt.slice(start, end+1)); } catch {} }
         }
-      }
-    } catch {}
-  }
-
-  // ── 6. Sélectionner la parcelle retenue ───────────────────────────────────
-  const matchIdx = visionResult && visionResult.confidence >= 45
-    ? visionResult.match_index - 1  // 1-based → 0-based
-    : -1;
-
-  const chosen = matchIdx >= 0 && matchIdx < withAerials.length
-    ? withAerials[matchIdx]
-    : (withAerials[0] ?? withMeta[0] ?? null);  // fallback : première parcelle compatible
-
-  // ── 7. Adresse + propriétaire ─────────────────────────────────────────────
-  let adresseLabel: string | null = null;
-  let owner: { nom: string; source: string; entreprise: string } | null = null;
-
-  if (chosen?.center) {
-    const [cLat, cLng] = chosen.center;
-    adresseLabel = await reverseGeocode(cLat, cLng);
-    if (adresseLabel) {
-      owner = await sireneOwner(cLat, cLng, adresseLabel);
+      } catch {}
     }
   }
 
-  // ── 8. DPE cross-check ────────────────────────────────────────────────────
-  // (optionnel — le frontend peut appeler /api/dpe séparément si besoin)
+  // ── 3. Résultat Vision IA ─────────────────────────────────────────────────
+  const matchIdx = visionResult && visionResult.confidence >= 50
+    ? visionResult.match_index - 1
+    : -1;
+
+  const chosenDvf = matchIdx >= 0 && matchIdx < dvfVisionCandidates.length
+    ? dvfVisionCandidates[matchIdx]
+    : null;
+
+  if (chosenDvf) {
+    const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
+    const owner = await sireneOwner(chosenDvf.lat, chosenDvf.lng, chosenDvf.adresse + " " + chosenDvf.commune);
+    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${chosenDvf.lng}&lat=${chosenDvf.lat}`, { signal: AbortSignal.timeout(8000) });
+    let parcel = null;
+    if (parcelRes.ok) {
+      const pd = await parcelRes.json();
+      const f = pd.features?.[0];
+      if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
+    }
+    return NextResponse.json({
+      method: "dvf_vision",
+      dvf_confidence: "medium",
+      dvf_surface: chosenDvf.surface_bati,
+      dvf_terrain: chosenDvf.surface_terrain,
+      adresse: chosenDvf.adresse + (chosenDvf.commune ? ", " + chosenDvf.commune : ""),
+      parcel, owner, matched: true, geoportailUrl: dvfGeoUrl,
+      vision_used: true,
+      vision_confidence: visionResult?.confidence ?? null,
+      vision_reason: visionResult?.reason ?? null,
+    });
+  }
+
+  // ── 4. Aucun match — retourner les candidats DVF bruts pour info ───────────
+  const dvfBruts = dvfTypePool
+    .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
+    .slice(0, 5)
+    .map(r => ({ adresse: r.adresse + (r.commune ? ", " + r.commune : ""), surface_bati: r.surface_bati, surface_terrain: r.surface_terrain }));
 
   return NextResponse.json({
-    parcels_total: allParcels.length,
-    candidates_count: candidates.length,
-    aerials_fetched: withAerials.length,
+    matched: false,
     vision_used: listingB64 !== null,
     vision_confidence: visionResult?.confidence ?? null,
     vision_reason: visionResult?.reason ?? null,
-    matched: matchIdx >= 0,
-    parcel: chosen ? {
-      section: chosen.section,
-      numero: chosen.numero,
-      contenance: chosen.contenance,
-      commune: chosen.commune,
-    } : null,
-    adresse: adresseLabel,
-    owner, geoportailUrl,
+    dvf_candidates: dvfBruts.length > 0 ? dvfBruts : undefined,
+    geoportailUrl,
+    message: dvfTypePool.length === 0
+      ? "Aucune vente de ce type trouvée dans la commune (DVF 2021-2025)"
+      : `${dvfTypePool.length} vente(s) dans la commune — surface trop courante pour identifier`,
   });
 }
