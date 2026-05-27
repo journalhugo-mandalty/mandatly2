@@ -103,21 +103,33 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Code INSEE introuvable" }, { status: 404 });
     }
 
-    // geo-dvf/latest contient uniquement 2021-2025 (années antérieures vides)
-    // → on itère du plus ancien (meilleur signal vendeur) au plus récent
+    // Lyon, Paris, Marseille : code INSEE générique → arrondissements réels dans geo-dvf
+    const ARRONDISSEMENTS: Record<string, string[]> = {
+      "69123": ["69381","69382","69383","69384","69385","69386","69387","69388","69389"],
+      "75056": Array.from({length:20},(_,i)=>`7510${String(i+1).padStart(1,"0")}`).map(c=>c.length===5?c:`75${String(Number(c.slice(2))).padStart(3,"0")}`),
+      "13055": Array.from({length:16},(_,i)=>`132${String(i+1).padStart(2,"0")}`),
+    };
+    // Correction Paris : 75101-75120
+    ARRONDISSEMENTS["75056"] = Array.from({length:20},(_,i)=>`75${String(101+i).padStart(3,"0")}`);
+
+    const inseeList = ARRONDISSEMENTS[inseeCode] ?? [inseeCode];
+
+    // geo-dvf/latest contient uniquement 2021-2025
     const curYear = new Date().getFullYear();
     const years = [2021, 2022, 2023, 2024, 2025].filter(y => y <= curYear);
 
     let allTx: any[] = [];
-    // Fetch toutes les années en parallèle (pas de break anticipé qui fausse la diversité)
+    // Fetch toutes les années × tous les arrondissements en parallèle
     const csvResults = await Promise.allSettled(
-      years.map(async year => {
-        const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/communes/${dept}/${inseeCode}.csv`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-        if (!res.ok) return [];
-        const text = await res.text();
-        return parseCSV(text);
-      })
+      years.flatMap(year =>
+        inseeList.map(async insee => {
+          const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/communes/${dept}/${insee}.csv`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          if (!res.ok) return [];
+          const text = await res.text();
+          return parseCSV(text);
+        })
+      )
     );
     for (const r of csvResults) {
       if (r.status === "fulfilled") allTx.push(...r.value);

@@ -14,9 +14,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "commune ou insee requis" }, { status: 400 });
   }
 
+  // Villes à arrondissements : l'INSEE générique n'existe pas dans la base DPE
+  // → toujours chercher par nom de commune pour Lyon, Paris, Marseille
+  const COMMUNES_SPECIALES = new Set(["69123","75056","13055"]);
+  const useInsee = insee && !COMMUNES_SPECIALES.has(insee);
+
   try {
-    // Prefer INSEE code for exact match; fall back to commune name
-    const qParam = insee
+    const qParam = useInsee
       ? `q_fields=code_insee_ban&q=${encodeURIComponent(insee)}`
       : `q_fields=nom_commune_ban&q=${encodeURIComponent(commune.toUpperCase())}`;
 
