@@ -1,6 +1,8 @@
 "use client";
 import { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
-import { getSupabase } from "../lib/supabase";
+import { useRouter } from "next/navigation";
+import { loadUserData, saveUserData, signOut as supabaseSignOut } from "../lib/supabase";
+import { createClient as createBrowserClient } from "../utils/supabase/client";
 
 const MapComponent = lazy(() => import("./map-component"));
 
@@ -119,6 +121,7 @@ const PIPELINE_COLS = [{id:"prospect",label:"Prospect",color:"#94A3B8"},{id:"est
 const fmt = (n:number) => n?.toLocaleString("fr-FR") || "0";
 
 export default function App() {
+  const router = useRouter();
   const [dark, setDark] = useState(false);
   const [nav, setNav] = useState("prospects");
   const [mandats, setMandats] = useState<Mandat[]>(()=>{
@@ -214,10 +217,6 @@ export default function App() {
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
   // Supabase auth
   const [user, setUser] = useState<any>(null);
-  const [authModal, setAuthModal] = useState(false);
-  const [authEmail, setAuthEmail] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authMsg, setAuthMsg] = useState("");
   // Yousign signature
   const [sigState, setSigState] = useState<Record<number,SignatureState>>({});
   // Stripe subscription
@@ -302,47 +301,40 @@ export default function App() {
     }
   },[]);
 
-  // Supabase: init auth listener + load data on login
+  // Supabase: load user + data on mount
   useEffect(()=>{
-    const sb = getSupabase();
-    if(!sb) return;
-    sb.auth.getUser().then(({data:{user}})=>{
-      if(user){ setUser(user); loadSupabase(sb, user.id); }
-    });
-    const {data:{subscription}} = sb.auth.onAuthStateChange((_,session)=>{
-      const u = session?.user ?? null;
-      setUser(u);
-      if(u) loadSupabase(sb, u.id);
-    });
-    return ()=>subscription.unsubscribe();
+    const init = async () => {
+      const supabase = createBrowserClient();
+      const { data: { user: u } } = await supabase.auth.getUser();
+      if (u) setUser(u);
+      const data = await loadUserData();
+      if (!data) return;
+      if (data.mandats?.length) setMandats(data.mandats);
+      if (data.acheteurs?.length) setAcheteurs(data.acheteurs);
+      if (data.rdvs?.length) setRdvs(data.rdvs);
+      if (data.transacs?.length) setTransacs(data.transacs);
+      if (data.courriers?.length) setCourrierHisto(data.courriers);
+      if (data.agent?.prenom) setAgent(data.agent);
+      if (data.radar_villes?.length) setRadarVilles(data.radar_villes);
+      if (data.crm_statuses && Object.keys(data.crm_statuses).length) setCrmStatuses(data.crm_statuses);
+      if (data.prosp_crm && Object.keys(data.prosp_crm).length) setProspCrm(data.prosp_crm);
+      if (data.sent_count) setCourriersSent(data.sent_count);
+      if (data.mandats_prosp) setMandatsFromProsp(data.mandats_prosp);
+    };
+    init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
-
-  async function loadSupabase(sb: NonNullable<ReturnType<typeof getSupabase>>, userId: string) {
-    const {data} = await sb.from("user_data").select("*").eq("user_id", userId).single();
-    if(!data) return;
-    if(data.mandats?.length) setMandats(data.mandats);
-    if(data.acheteurs?.length) setAcheteurs(data.acheteurs);
-    if(data.rdvs?.length) setRdvs(data.rdvs);
-    if(data.transacs?.length) setTransacs(data.transacs);
-    if(data.courriers?.length) setCourrierHisto(data.courriers);
-    if(data.agent?.prenom) setAgent(data.agent);
-  }
 
   // Supabase: debounced sync on any data change
   const syncTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
   useEffect(()=>{
-    const sb = getSupabase();
-    if(!sb||!user) return;
+    if (!user) return;
     if(syncTimer.current) clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(async()=>{
-      await sb.from("user_data").upsert({
-        user_id: user.id, mandats, acheteurs, rdvs, transacs,
-        courriers: courrierHisto, agent, updated_at: new Date().toISOString()
-      });
+      await saveUserData({ mandats, acheteurs, rdvs, transacs, courriers: courrierHisto, agent, radar_villes: radarVilles, crm_statuses: crmStatuses, prosp_crm: prospCrm, sent_count: courriersSent, mandats_prosp: mandatsFromProsp });
     }, 1500);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[mandats, acheteurs, rdvs, transacs, courrierHisto, agent]);
+  },[mandats, acheteurs, rdvs, transacs, courrierHisto, agent, radarVilles, crmStatuses, prospCrm, courriersSent, mandatsFromProsp]);
 
   // Auto-generate courrier when a prospect is selected in prospection tab
   useEffect(()=>{
@@ -801,16 +793,12 @@ export default function App() {
             <button onClick={()=>setStripeModal(true)} style={{padding:"5px 12px",background:C.gold+"18",border:`1px solid ${C.gold}40`,borderRadius:8,fontSize:11,color:C.gold,cursor:"pointer",fontWeight:600}}>Passer Pro</button>
           )}
           {stripeMsg&&<span style={{fontSize:11,color:C.green,fontWeight:500}}>{stripeMsg}</span>}
-          {getSupabase()&&(
-            user?(
-              <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",background:C.green+"15",border:`1px solid ${C.green}25`,borderRadius:8}}>
-                <div style={{width:6,height:6,borderRadius:"50%",background:C.green}}/>
-                <span style={{fontSize:11,color:C.green,fontWeight:500}}>{user.email?.split("@")[0]}</span>
-                <button onClick={async()=>{const sb=getSupabase();if(sb){await sb.auth.signOut();setUser(null);}}} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",marginLeft:2}}>×</button>
-              </div>
-            ):(
-              <button onClick={()=>setAuthModal(true)} style={{padding:"5px 12px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.muted,cursor:"pointer",fontWeight:500}}>Connexion</button>
-            )
+          {user&&(
+            <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",background:C.green+"15",border:`1px solid ${C.green}25`,borderRadius:8}}>
+              <div style={{width:6,height:6,borderRadius:"50%",background:C.green}}/>
+              <span style={{fontSize:11,color:C.green,fontWeight:500}}>{user.email?.split("@")[0]}</span>
+              <button onClick={async()=>{await supabaseSignOut();router.push("/login");}} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",marginLeft:2}}>×</button>
+            </div>
           )}
           <button onClick={()=>setChat(o=>!o)} style={{padding:"6px 14px",background:chat?C.accentBg:C.surface,border:`1px solid ${chat?C.border2:C.border}`,borderRadius:8,color:chat?C.text:C.muted,fontSize:13,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:C.green,animation:"pulse 2s infinite"}}/>
@@ -2936,7 +2924,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                 <button disabled={stripeLoading} onClick={async()=>{
                   setStripeLoading(true);
                   const email = user?.email;
-                  if(!email){setStripeLoading(false);setStripeModal(false);setAuthModal(true);return;}
+                  if(!email){setStripeLoading(false);setStripeModal(false);router.push("/login");return;}
                   const r = await fetch("/api/stripe/checkout",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,userId:user?.id})});
                   const d = await r.json();
                   setStripeLoading(false);
@@ -2953,43 +2941,6 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                 </button>
               )}
               <div style={{fontSize:10,color:C.muted,textAlign:"center",marginTop:12}}>Résiliable à tout moment · Paiement sécurisé Stripe</div>
-            </div>
-          </div>
-        )}
-
-        {/* AUTH MODAL */}
-        {authModal&&(
-          <div onClick={()=>{setAuthModal(false);setAuthMsg("");setAuthEmail("");}} style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <div onClick={e=>e.stopPropagation()} style={{width:400,background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:28,boxShadow:`0 24px 64px ${C.shadow}`,animation:"fadeUp 0.2s ease"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-                <div>
-                  <div style={{fontSize:16,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Connexion</div>
-                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>Synchronisez vos données sur tous vos appareils</div>
-                </div>
-                <button onClick={()=>setAuthModal(false)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
-              </div>
-              <div style={{fontSize:11,color:C.muted,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Email</div>
-              <input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="votre@email.fr" onKeyDown={e=>e.key==="Enter"&&!authLoading&&document.getElementById("auth-btn")?.click()} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:13,marginBottom:12}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-              {authMsg&&<div style={{fontSize:12,color:authMsg.includes("erreur")||authMsg.includes("Erreur")?C.red:C.green,background:(authMsg.includes("erreur")||authMsg.includes("Erreur")?C.red:C.green)+"10",borderRadius:8,padding:"8px 12px",marginBottom:12}}>{authMsg}</div>}
-              <button id="auth-btn" disabled={authLoading||!authEmail.includes("@")} onClick={async()=>{
-                const sb=getSupabase();
-                if(!sb){setAuthMsg("Supabase non configuré — ajoutez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY dans Vercel.");return;}
-                setAuthLoading(true);setAuthMsg("");
-                const {error}=await sb.auth.signInWithOtp({email:authEmail,options:{emailRedirectTo:window.location.href}});
-                setAuthLoading(false);
-                setAuthMsg(error?`Erreur : ${error.message}`:"Lien de connexion envoyé — vérifiez votre email.");
-              }} style={{width:"100%",background:authLoading||!authEmail.includes("@")?C.border:C.accent,color:authLoading||!authEmail.includes("@")?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:600,cursor:authLoading||!authEmail.includes("@")?"default":"pointer",marginBottom:16}}>
-                {authLoading?"Envoi...":"Recevoir un lien magique"}
-              </button>
-              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14}}>
-                <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Configuration requise dans Vercel :</div>
-                {[["NEXT_PUBLIC_SUPABASE_URL","URL de votre projet Supabase"],["NEXT_PUBLIC_SUPABASE_ANON_KEY","Clé anon publique Supabase"]].map(([k,v])=>(
-                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"4px 0"}}>
-                    <code style={{fontSize:10,color:C.text,fontFamily:"monospace"}}>{k}</code>
-                    <span style={{fontSize:10,color:C.muted}}>{v}</span>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         )}
