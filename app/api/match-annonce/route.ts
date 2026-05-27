@@ -78,29 +78,49 @@ async function fetchPhotoB64(url: string): Promise<string | null> {
 }
 
 function extractLocalityKeyword(adresse: string): string | null {
-  // "154 Route de Collebasse 83350 Ramatuelle" → "Collebasse"
-  // "L'Oumède Nord 83350 Ramatuelle"           → "Oumede"
-  // "10 Avenue des Girelles 83350 Ramatuelle"  → "Girelles"
   const GENERIC = /^(NORD|SUD|EST|OUEST|HAUT|BAS|GRAND|PETIT|VIEUX|VIEILLE|DE|DU|DES|D|L|LA|LES|LE|EN|AU|AUX|ET|SAINT|SAINTE|STE|ST)$/i;
   const STREET_TYPES = /^(RUE|AVENUE|AVE|AV|COURS|CRS|ALLEE|ALL|BOULEVARD|BD|IMPASSE|IMP|CHEMIN|CHE|ROUTE|RTE|VOIE|PASSAGE|SENTIER|PLACE|PL|LIEU[- ]DIT|LD|HAMEAU|DOMAINE|DOM|LOTISSEMENT|LOT|VILLA|QUARTIER|QUA|DRAILLE|TRAVERSE|TRV|MONTEE|DESCENTE)$/i;
   const words = adresse
-    .replace(/\b\d{5}\b.*$/, "")       // remove postal code + everything after
-    .replace(/^[\d]+\s*(BIS|TER|QUATER)?\s*/i, "")  // remove street number
-    .split(/[\s']+/)                    // split on spaces and apostrophes
+    .replace(/\b\d{5}\b.*$/, "")
+    .replace(/^[\d]+\s*(BIS|TER|QUATER)?\s*/i, "")
+    .split(/[\s']+/)
     .filter(w => w.length >= 2);
-  // Skip street type words and generic words, find first specific word >= 4 chars
   let skip = true;
   for (const w of words) {
     if (skip && (STREET_TYPES.test(w) || GENERIC.test(w))) continue;
     skip = false;
-    if (GENERIC.test(w)) continue;  // skip "de", "du", "des" after street type
+    if (GENERIC.test(w)) continue;
     if (w.length < 4) continue;
-    if (/^\d+$/.test(w)) continue;  // skip pure numbers (years, street numbers)
-    // Normalize accents and non-alphanum
+    if (/^\d+$/.test(w)) continue;
     const norm = w.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-zA-Z0-9]/g, "");
     if (norm.length >= 4) return norm;
   }
   return null;
+}
+
+// Extrait tous les mots significatifs (≥5 chars, normalisés) d'un texte libre
+function extractTextKeywords(text: string): string[] {
+  const NOISE = /^(MAISON|VILLA|APPARTEMENT|VENTE|ACHAT|BELLE|MAGNIFIQUE|SUPERBE|JOLIE|IDEALE|IDEAL|EXCLUSIVITE|OFFRE|RARE|PIECE|PIECES|CHAMBRE|CHAMBRES|CUISINE|SALON|SEJOUR|GARAGE|PARKING|JARDIN|PISCINE|TERRASSE|AVEC|POUR|DANS|CETTE|VOTRE|NOTRE|VOUS|PLEIN|BEAU|PROCHE|CENTRE|VILLE|QUARTIER|ENTRE|ENVIRON|ESPACE|PLUS|PLUS|TRES|TOUT|TOUTE|TOUS|TOUTES|BORD|PLAGE)$/i;
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[^a-zA-ZÀ-ÿ\s]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length >= 5)
+    .map(w => w.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase())
+    .filter(w => !NOISE.test(w) && /^[A-Z]{5,}$/.test(w));
+}
+
+// Filtre un pool DVF par correspondance de mots-clés avec le titre/description de l'annonce
+function filterByTextMatch(pool: any[], titre: string, description: string): any[] {
+  const allText = `${titre} ${description}`;
+  const keywords = extractTextKeywords(allText);
+  if (!keywords.length) return pool;
+
+  return pool.filter(m => {
+    const dvfAddr = (m.adresse || "").toUpperCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "");
+    return keywords.some(kw => dvfAddr.includes(kw));
+  });
 }
 
 function pickBestSirene(results: any[]): {nom:string;source:string;entreprise:string} | null {
@@ -276,8 +296,8 @@ export async function POST(req: NextRequest) {
   if (!anthropicKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY manquante" }, { status: 503 });
 
   const body = await req.json();
-  const { lat, lng, surface = 100, terrain = 0, type = "Maison", ville = "", cp = "", photos = [] }: {
-    lat: number; lng: number; surface: number; terrain: number; type: string; ville: string; cp: string; photos: string[];
+  const { lat, lng, surface = 100, terrain = 0, type = "Maison", ville = "", cp = "", titre = "", description = "", photos = [] }: {
+    lat: number; lng: number; surface: number; terrain: number; type: string; ville: string; cp: string; titre: string; description: string; photos: string[];
   } = body;
 
   if (!lat || !lng) return NextResponse.json({ error: "lat et lng requis" }, { status: 400 });
@@ -287,7 +307,24 @@ export async function POST(req: NextRequest) {
 
   // ── 0. DVF cross-match (le plus fiable : adresse exacte) ──────────────────
   const dvfPool = await dvfCrossMatch(ville, cp, lat, lng, surface, terrain, type);
-  const dvfMatch = dvfPool.match;
+  let dvfMatch = dvfPool.match;
+
+  // Affiner par mots-clés de l'annonce (titre + description) si match imprécis
+  if (dvfMatch?.confidence === "medium" && (titre || description)) {
+    const filtered = filterByTextMatch(dvfMatch.candidates || [], titre, description);
+    if (filtered.length === 1) dvfMatch = { ...filtered[0], confidence: "high" };
+    else if (filtered.length >= 2 && filtered.length < (dvfMatch.candidates?.length || 99)) {
+      dvfMatch = { ...filtered[0], confidence: "medium", candidates: filtered };
+    }
+  }
+  // Aussi tenter le filtrage texte sur le pool complet si pas de match
+  if (!dvfMatch && (titre || description)) {
+    const textFiltered = filterByTextMatch(dvfPool.allTypePool, titre, description);
+    const sMin = surface * 0.75, sMax = surface * 1.35;
+    const sFiltered = textFiltered.filter(r => r.surface_bati >= sMin && r.surface_bati <= sMax);
+    if (sFiltered.length === 1) dvfMatch = { ...sFiltered[0], confidence: "high" };
+    else if (sFiltered.length >= 2 && sFiltered.length <= 5) dvfMatch = { ...sFiltered[0], confidence: "medium", candidates: sFiltered };
+  }
 
   if (dvfMatch && dvfMatch.confidence === "high") {
     const [owner, parcelRes] = await Promise.all([

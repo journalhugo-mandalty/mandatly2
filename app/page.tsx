@@ -535,6 +535,8 @@ export default function App() {
           type: annonce.type || "Maison",
           ville: annonce.ville || "",
           cp: annonce.cp || "",
+          titre: annonce.titre || "",
+          description: annonce.description || "",
           photos,
         }),
       });

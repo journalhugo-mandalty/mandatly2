@@ -96,6 +96,9 @@ function mapBieniciAd(a: any, nomVille: string): any | null {
     source: "Bien'ici",
     publishedAt: a.publicationDate || null,
     isNew: !!a.newProperty,
+    description: typeof a.description === "string"
+      ? a.description.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 500)
+      : null,
   };
 }
 
