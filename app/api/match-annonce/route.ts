@@ -200,9 +200,11 @@ function parseCSVRows(text: string): any[] {
   return rows;
 }
 
-async function dvfCrossMatch(lat: number, lng: number, surface: number, terrain: number, type: string): Promise<{adresse:string;commune:string;lat:number;lng:number;surface_bati:number;surface_terrain:number;confidence:"high"|"medium"}|null> {
-  // Reverse geocode to get commune/dept
+type DvfMatch = { adresse:string; commune:string; lat:number; lng:number; surface_bati:number; surface_terrain:number; confidence:"high"|"medium"; candidates?: DvfMatch[] };
+
+async function dvfCrossMatch(lat: number, lng: number, surface: number, terrain: number, type: string): Promise<DvfMatch|null> {
   try {
+    // Reverse geocode → commune INSEE (on ignore la distance, on cherche toute la commune)
     const banRes = await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`, { signal: AbortSignal.timeout(6000) });
     if (!banRes.ok) return null;
     const banData = await banRes.json();
@@ -212,8 +214,8 @@ async function dvfCrossMatch(lat: number, lng: number, surface: number, terrain:
     const dept = insee.slice(0, insee.startsWith("97") ? 3 : 2);
     if (!dept) return null;
 
-    // Fetch DVF for current and adjacent years
-    const years = [2022, 2023, 2024, 2025];
+    // Fetch DVF 2021-2025 pour toute la commune
+    const years = [2021, 2022, 2023, 2024, 2025];
     let allRows: any[] = [];
     const csvResults = await Promise.allSettled(
       years.map(async y => {
@@ -225,30 +227,36 @@ async function dvfCrossMatch(lat: number, lng: number, surface: number, terrain:
     );
     for (const r of csvResults) if (r.status === "fulfilled") allRows.push(...r.value);
 
-    // Filter by type + distance ≤1.5km + surface ±20%
     const typeMatch = type === "Maison" ? "Maison" : "Appartement";
-    const candidates = allRows
-      .filter(r =>
-        r.type_local === typeMatch &&
-        r.surface_bati >= surface * 0.8 && r.surface_bati <= surface * 1.25 &&
-        haversineKm(lat, lng, r.lat, r.lng) <= 1.5
-      )
-      .map(r => ({ ...r, dist: haversineKm(lat, lng, r.lat, r.lng) }))
-      .sort((a, b) => a.dist - b.dist);
 
-    if (!candidates.length) return null;
+    // Filtre surface ±12% dans toute la commune — pas de filtre distance
+    let pool = allRows.filter(r =>
+      r.type_local === typeMatch &&
+      r.surface_bati >= surface * 0.88 && r.surface_bati <= surface * 1.14
+    );
 
-    // Add terrain filter if available
+    // Terrain disponible → filtre ±20% (plus strict)
     if (terrain > 0) {
-      const withTerrain = candidates.filter(r => r.surface_terrain > 0 && r.surface_terrain >= terrain * 0.7 && r.surface_terrain <= terrain * 1.4);
-      if (withTerrain.length === 1) return { ...withTerrain[0], confidence: "high" };
-      if (withTerrain.length >= 2 && withTerrain.length <= 3) return { ...withTerrain[0], confidence: "medium" };
+      const withT = pool.filter(r => r.surface_terrain > 0 && r.surface_terrain >= terrain * 0.80 && r.surface_terrain <= terrain * 1.25);
+      if (withT.length === 1) return { ...withT[0], confidence: "high" };
+      if (withT.length >= 2 && withT.length <= 4) {
+        // Plusieurs candidats — trier par distance et retourner tous pour affichage
+        const sorted = withT
+          .map(r => ({ ...r, dist: haversineKm(lat, lng, r.lat, r.lng) }))
+          .sort((a, b) => a.dist - b.dist);
+        return { ...sorted[0], confidence: "medium", candidates: sorted };
+      }
+      // Trop de résultats avec terrain → relâcher et utiliser surface seule
     }
 
-    // Without terrain: unique match at close range is reliable
-    const close = candidates.filter(r => r.dist <= 0.5);
-    if (close.length === 1) return { ...close[0], confidence: "high" };
-    if (candidates.length === 1) return { ...candidates[0], confidence: "medium" };
+    // Sans terrain : match unique dans la commune = fiable
+    if (pool.length === 1) return { ...pool[0], confidence: "high" };
+    if (pool.length >= 2 && pool.length <= 3) {
+      const sorted = pool
+        .map(r => ({ ...r, dist: haversineKm(lat, lng, r.lat, r.lng) }))
+        .sort((a, b) => a.dist - b.dist);
+      return { ...sorted[0], confidence: "medium", candidates: sorted };
+    }
 
     return null;
   } catch { return null; }
@@ -283,6 +291,7 @@ export async function POST(req: NextRequest) {
       dvf_confidence: dvfMatch.confidence,
       dvf_surface: dvfMatch.surface_bati,
       dvf_terrain: dvfMatch.surface_terrain,
+      dvf_candidates: dvfMatch.candidates?.map(c => ({ adresse: c.adresse + (c.commune ? ", " + c.commune : ""), surface_bati: c.surface_bati, surface_terrain: c.surface_terrain })),
       parcel, adresse: dvfMatch.adresse + (dvfMatch.commune ? ", " + dvfMatch.commune : ""),
       owner, matched: true,
     });

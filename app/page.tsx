@@ -2788,6 +2788,16 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               {matchResult.adresse&&<span style={{display:"block",marginTop:3,color:C.text,fontWeight:500}}>{matchResult.adresse}</span>}
                             </div>
                           )}
+                          {matchResult.dvf_candidates?.length>1&&(
+                            <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginBottom:8}}>
+                              <div style={{fontSize:10,color:C.amber,fontWeight:600,marginBottom:6}}>Autres candidats DVF ({matchResult.dvf_candidates.length}) :</div>
+                              {matchResult.dvf_candidates.slice(1).map((c:any,i:number)=>(
+                                <div key={i} style={{fontSize:11,color:C.muted,padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
+                                  {c.adresse} · {c.surface_bati}m² {c.surface_terrain>0?`terrain ${c.surface_terrain}m²`:""}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {matchResult.vision_confidence!==null&&(
                             <div style={{fontSize:11,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
                               Confiance vision: {matchResult.vision_confidence}%
