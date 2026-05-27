@@ -336,11 +336,17 @@ export async function POST(req: NextRequest) {
   let dvfVisionCandidates: DvfCandidate[] = [];
 
   if (listingB64 && dvfTypePool.length > 0) {
-    // Trier les mutations par proximité de surface (sans exclure trop fortement)
-    const sorted = [...dvfTypePool]
-      .filter(r => r.surface_bati >= surface * 0.55 && r.surface_bati <= surface * 1.80)
-      .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
-      .slice(0, 6);
+    // Si DVF a trouvé 2-5 candidats (medium confidence), utiliser CES candidats précis
+    // Sinon, prendre les 6 plus proches en surface dans tout le pool
+    const medCandidates = dvfMatch?.confidence === "medium" && dvfMatch.candidates?.length
+      ? dvfMatch.candidates
+      : null;
+    const sorted = medCandidates
+      ? medCandidates
+      : [...dvfTypePool]
+          .filter(r => r.surface_bati >= surface * 0.55 && r.surface_bati <= surface * 1.80)
+          .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
+          .slice(0, 6);
 
     // Vue aérienne IGN à chaque coordonnée DVF réelle
     const aerialResults = await Promise.all(
