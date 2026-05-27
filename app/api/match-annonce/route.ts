@@ -175,89 +175,93 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function parseCSVRows(text: string): any[] {
+// Agrège les lignes DVF par mutation (une vente = plusieurs lots/parcelles)
+function aggregateMutations(text: string): any[] {
   const lines = text.split("\n");
-  const rows: any[] = [];
+  const mutations = new Map<string, any>();
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].trim().split(",");
     if (c.length < 40) continue;
     const type = c[30];
     if (type !== "Maison" && type !== "Appartement") continue;
-    const lat2 = parseFloat(c[39]), lng2 = parseFloat(c[38]);
-    if (!lat2 || !lng2 || isNaN(lat2) || isNaN(lng2)) continue;
+    const mutId = c[0];
     const surface = parseFloat(c[31]) || 0;
     const terrain = parseFloat(c[37]) || 0;
-    if (!surface) continue;
-    rows.push({
-      adresse: `${c[5] || ""} ${c[7] || ""}`.trim(),
-      commune: c[11] || "",
-      type_local: type,
-      surface_bati: surface,
-      surface_terrain: terrain,
-      lat: lat2, lng: lng2,
-    });
+    const lat = parseFloat(c[39]);
+    const lng = parseFloat(c[38]);
+    if (!mutId) continue;
+    if (!mutations.has(mutId)) {
+      mutations.set(mutId, { adresse: "", commune: c[11]||"", type_local: type, surface_bati: 0, surface_terrain: 0, lat: 0, lng: 0 });
+    }
+    const m = mutations.get(mutId);
+    if (surface > m.surface_bati) {
+      m.surface_bati = surface;
+      m.adresse = `${c[5]||""} ${c[7]||""}`.trim();
+      if (!isNaN(lat) && lat) { m.lat = lat; m.lng = lng; }
+    }
+    m.surface_terrain += terrain; // sommer toutes les parcelles
   }
-  return rows;
+  return Array.from(mutations.values()).filter(m => m.surface_bati > 0);
 }
 
 type DvfMatch = { adresse:string; commune:string; lat:number; lng:number; surface_bati:number; surface_terrain:number; confidence:"high"|"medium"; candidates?: DvfMatch[] };
 
-async function dvfCrossMatch(lat: number, lng: number, surface: number, terrain: number, type: string): Promise<DvfMatch|null> {
+async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number, surface: number, terrain: number, type: string): Promise<DvfMatch|null> {
   try {
-    // Reverse geocode → commune INSEE (on ignore la distance, on cherche toute la commune)
-    const banRes = await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`, { signal: AbortSignal.timeout(6000) });
-    if (!banRes.ok) return null;
-    const banData = await banRes.json();
-    const feat = banData.features?.[0];
-    if (!feat) return null;
-    const insee = feat.properties.citycode || "";
-    const dept = insee.slice(0, insee.startsWith("97") ? 3 : 2);
-    if (!dept) return null;
+    // Utiliser ville+CP pour trouver l'INSEE (coordonnées Bien'ici = centroïde flou, inutilisable)
+    let insee = "", dept = "";
+    const q = cp ? `${ville}&postcode=${cp}` : ville;
+    const banRes = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&type=municipality&limit=1`, { signal: AbortSignal.timeout(6000) });
+    if (banRes.ok) {
+      const banData = await banRes.json();
+      const feat = banData.features?.[0];
+      if (feat) { insee = feat.properties.citycode || ""; dept = insee.slice(0, insee.startsWith("97") ? 3 : 2); }
+    }
+    // Fallback reverse geocode si pas de résultat
+    if (!insee) {
+      const rev = await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`, { signal: AbortSignal.timeout(6000) });
+      if (rev.ok) {
+        const rd = await rev.json();
+        const f = rd.features?.[0];
+        if (f) { insee = f.properties.citycode || ""; dept = insee.slice(0, insee.startsWith("97") ? 3 : 2); }
+      }
+    }
+    if (!insee || !dept) return null;
 
-    // Fetch DVF 2021-2025 pour toute la commune
+    // Fetch DVF 2021-2025, agréger par mutation
     const years = [2021, 2022, 2023, 2024, 2025];
-    let allRows: any[] = [];
+    let allMuts: any[] = [];
     const csvResults = await Promise.allSettled(
       years.map(async y => {
         const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${y}/communes/${dept}/${insee}.csv`;
         const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
         if (!res.ok) return [];
-        return parseCSVRows(await res.text());
+        return aggregateMutations(await res.text());
       })
     );
-    for (const r of csvResults) if (r.status === "fulfilled") allRows.push(...r.value);
+    for (const r of csvResults) if (r.status === "fulfilled") allMuts.push(...r.value);
 
     const typeMatch = type === "Maison" ? "Maison" : "Appartement";
 
-    // Filtre surface ±12% dans toute la commune — pas de filtre distance
-    let pool = allRows.filter(r =>
-      r.type_local === typeMatch &&
-      r.surface_bati >= surface * 0.88 && r.surface_bati <= surface * 1.14
-    );
+    // Surface habitable Bien'ici ≈ 75-95% de la surface bâtie DVF → tolérance large
+    const sMin = surface * 0.75, sMax = surface * 1.35;
+    let pool = allMuts.filter(r => r.type_local === typeMatch && r.surface_bati >= sMin && r.surface_bati <= sMax);
 
-    // Terrain disponible → filtre ±20% (plus strict)
-    if (terrain > 0) {
-      const withT = pool.filter(r => r.surface_terrain > 0 && r.surface_terrain >= terrain * 0.80 && r.surface_terrain <= terrain * 1.25);
+    // Avec terrain : filtre ±30% sur le terrain agrégé
+    if (terrain > 100) {
+      const tMin = terrain * 0.70, tMax = terrain * 1.40;
+      const withT = pool.filter(r => r.surface_terrain >= tMin && r.surface_terrain <= tMax);
       if (withT.length === 1) return { ...withT[0], confidence: "high" };
-      if (withT.length >= 2 && withT.length <= 4) {
-        // Plusieurs candidats — trier par distance et retourner tous pour affichage
-        const sorted = withT
-          .map(r => ({ ...r, dist: haversineKm(lat, lng, r.lat, r.lng) }))
-          .sort((a, b) => a.dist - b.dist);
-        return { ...sorted[0], confidence: "medium", candidates: sorted };
+      if (withT.length >= 2 && withT.length <= 5) {
+        return { ...withT[0], confidence: "medium", candidates: withT };
       }
-      // Trop de résultats avec terrain → relâcher et utiliser surface seule
     }
 
-    // Sans terrain : match unique dans la commune = fiable
+    // Sans terrain ou terrain trop commun : unicité dans la commune
     if (pool.length === 1) return { ...pool[0], confidence: "high" };
-    if (pool.length >= 2 && pool.length <= 3) {
-      const sorted = pool
-        .map(r => ({ ...r, dist: haversineKm(lat, lng, r.lat, r.lng) }))
-        .sort((a, b) => a.dist - b.dist);
-      return { ...sorted[0], confidence: "medium", candidates: sorted };
+    if (pool.length >= 2 && pool.length <= 4) {
+      return { ...pool[0], confidence: "medium", candidates: pool };
     }
-
     return null;
   } catch { return null; }
 }
@@ -269,14 +273,17 @@ export async function POST(req: NextRequest) {
   if (!anthropicKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY manquante" }, { status: 503 });
 
   const body = await req.json();
-  const { lat, lng, surface = 100, terrain = 0, type = "Maison", photos = [] }: {
-    lat: number; lng: number; surface: number; terrain: number; type: string; photos: string[];
+  const { lat, lng, surface = 100, terrain = 0, type = "Maison", ville = "", cp = "", photos = [] }: {
+    lat: number; lng: number; surface: number; terrain: number; type: string; ville: string; cp: string; photos: string[];
   } = body;
 
   if (!lat || !lng) return NextResponse.json({ error: "lat et lng requis" }, { status: 400 });
 
+  // Lien satellite Géoportail centré sur les coordonnées (utile même si floues)
+  const geoportailUrl = `https://www.geoportail.gouv.fr/carte?c=${lng},${lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
+
   // ── 0. DVF cross-match (le plus fiable : adresse exacte) ──────────────────
-  const dvfMatch = await dvfCrossMatch(lat, lng, surface, terrain, type);
+  const dvfMatch = await dvfCrossMatch(ville, cp, lat, lng, surface, terrain, type);
   if (dvfMatch && dvfMatch.confidence === "high") {
     const owner = await sireneOwner(dvfMatch.lat, dvfMatch.lng, dvfMatch.adresse + " " + dvfMatch.commune);
     const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${dvfMatch.lng}&lat=${dvfMatch.lat}`, { signal: AbortSignal.timeout(8000) });
@@ -293,7 +300,7 @@ export async function POST(req: NextRequest) {
       dvf_terrain: dvfMatch.surface_terrain,
       dvf_candidates: dvfMatch.candidates?.map(c => ({ adresse: c.adresse + (c.commune ? ", " + c.commune : ""), surface_bati: c.surface_bati, surface_terrain: c.surface_terrain })),
       parcel, adresse: dvfMatch.adresse + (dvfMatch.commune ? ", " + dvfMatch.commune : ""),
-      owner, matched: true,
+      owner, matched: true, geoportailUrl,
     });
   }
 
@@ -427,6 +434,6 @@ export async function POST(req: NextRequest) {
       commune: chosen.commune,
     } : null,
     adresse: adresseLabel,
-    owner,
+    owner, geoportailUrl,
   });
 }

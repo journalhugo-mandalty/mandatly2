@@ -533,6 +533,8 @@ export default function App() {
           surface: annonce.surface || 100,
           terrain: annonce.terrain || 0,
           type: annonce.type || "Maison",
+          ville: annonce.ville || "",
+          cp: annonce.cp || "",
           photos,
         }),
       });
@@ -2804,7 +2806,13 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               {matchResult.vision_reason&&<span style={{display:"block",marginTop:1}}>{matchResult.vision_reason}</span>}
                             </div>
                           )}
-                          <button onClick={()=>setMatchResult(null)} style={{marginTop:10,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>
+                          {matchResult.geoportailUrl&&(
+                            <a href={matchResult.geoportailUrl} target="_blank" rel="noopener noreferrer"
+                              style={{display:"block",marginTop:8,padding:"8px 0",background:C.blue+"15",border:`1px solid ${C.blue}30`,borderRadius:8,fontSize:12,color:C.blue,textAlign:"center",textDecoration:"none",fontWeight:600}}>
+                              Vue satellite IGN →
+                            </a>
+                          )}
+                          <button onClick={()=>setMatchResult(null)} style={{marginTop:8,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>
                             Réessayer
                           </button>
                         </div>

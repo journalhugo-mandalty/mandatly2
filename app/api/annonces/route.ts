@@ -90,6 +90,7 @@ function mapBieniciAd(a: any, nomVille: string): any | null {
     agence: formatAgence(a),
     photos: (a.photos || []).slice(0, 3).map((p: any) => bestPhotoUrl([p])).filter(Boolean),
     lat, lng,
+    terrain: toNumber(a.landSurfaceArea) || 0,
     posType: a.blurInfo?.type || "unknown",
     url: a.id ? `https://www.bienici.com/annonce/${a.id}` : null,
     source: "Bien'ici",
