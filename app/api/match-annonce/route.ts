@@ -329,7 +329,7 @@ export async function POST(req: NextRequest) {
   if (dvfMatch && dvfMatch.confidence === "high") {
     const [owner, parcelRes] = await Promise.all([
       sireneOwner(dvfMatch.lat, dvfMatch.lng, dvfMatch.adresse + " " + dvfMatch.commune),
-      fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${dvfMatch.lng}&lat=${dvfMatch.lat}`, { signal: AbortSignal.timeout(8000) }),
+      fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[dvfMatch.lng,dvfMatch.lat]}))}`, { signal: AbortSignal.timeout(8000) }),
     ]);
     let parcel = null;
     if (parcelRes.ok) {
@@ -437,7 +437,7 @@ export async function POST(req: NextRequest) {
   if (chosenDvf) {
     const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
     const owner = await sireneOwner(chosenDvf.lat, chosenDvf.lng, chosenDvf.adresse + " " + chosenDvf.commune);
-    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${chosenDvf.lng}&lat=${chosenDvf.lat}`, { signal: AbortSignal.timeout(8000) });
+    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenDvf.lng,chosenDvf.lat]}))}`, { signal: AbortSignal.timeout(8000) });
     let parcel = null;
     if (parcelRes.ok) {
       const pd = await parcelRes.json();
