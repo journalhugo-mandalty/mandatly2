@@ -260,18 +260,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Ville introuvable" }, { status: 404 });
     }
 
-    const bieniciPages = await Promise.allSettled([
-      fetchBieniciPage(zone.zoneId, 0,   "publicationDate", "desc"),
-      fetchBieniciPage(zone.zoneId, 60,  "publicationDate", "desc"),
-      fetchBieniciPage(zone.zoneId, 120, "publicationDate", "desc"),
-      fetchBieniciPage(zone.zoneId, 180, "publicationDate", "desc"),
-      fetchBieniciPage(zone.zoneId, 240, "publicationDate", "desc"),
-      fetchBieniciPage(zone.zoneId, 300, "publicationDate", "desc"),
-      fetchBieniciPage(zone.zoneId, 0,   "price",           "desc"),
-      fetchBieniciPage(zone.zoneId, 60,  "price",           "desc"),
-      fetchBieniciPage(zone.zoneId, 0,   "price",           "asc"),
-      fetchBieniciPage(zone.zoneId, 60,  "price",           "asc"),
-    ]);
+    // Pagination dynamique : on continue jusqu'à page incomplète (< 60 résultats)
+    const allRawDate: any[] = [];
+    let from = 0;
+    while (from < 3000) {
+      const batch = await Promise.allSettled(
+        [0,1,2,3,4].map(i => fetchBieniciPage(zone.zoneId, from + i*60, "publicationDate", "desc"))
+      );
+      let gotFull = false;
+      for (const p of batch) {
+        if (p.status !== "fulfilled") continue;
+        allRawDate.push(...p.value);
+        if (p.value.length >= 60) gotFull = true;
+      }
+      from += 300;
+      if (!gotFull) break; // toutes les pages du batch étaient incomplètes → fin
+    }
+    // Compléter avec tri prix pour récupérer annonces manquées
+    const bieniciPages = [
+      { status: "fulfilled" as const, value: allRawDate },
+      ...await Promise.allSettled([
+        fetchBieniciPage(zone.zoneId, 0,  "price", "desc"),
+        fetchBieniciPage(zone.zoneId, 60, "price", "desc"),
+        fetchBieniciPage(zone.zoneId, 0,  "price", "asc"),
+      ]),
+    ];
 
     const allRaw: any[] = [];
     const seen = new Set<string>();

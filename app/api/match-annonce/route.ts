@@ -156,8 +156,8 @@ async function scoreCandidateVision(
     const cr = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 120, messages: [{ role: "user", content }] }),
-      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 150, messages: [{ role: "user", content }] }),
+      signal: AbortSignal.timeout(30000),
     });
     if (cr.ok) {
       const cd = await cr.json();
@@ -590,8 +590,23 @@ export async function POST(req: NextRequest) {
       }
       // Stocker les scores pour les retourner dans dvf_candidates si pas de match
       if (!chosenDvf) {
-        (scored as any[]).forEach((s, i) => { candidates[i].__score = s.score; });
+        scored.forEach((s: any) => {
+          const c = candidates.find(x => x.adresse === s.adresse && x.lat === s.lat);
+          if (c) c.__score = s.score;
+        });
       }
+    }
+  }
+
+  // Fallback surface : si Vision IA n'a pas abouti, prendre le candidat le plus proche en surface
+  if (!chosenDvf && dvfTypePool.length > 0) {
+    const fallback = [...dvfTypePool]
+      .filter(r => r.surface_bati >= surface * 0.65 && r.surface_bati <= surface * 1.65)
+      .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))[0] ?? null;
+    if (fallback) {
+      chosenDvf = fallback;
+      visionScore = 0;
+      visionReason = "identification par surface uniquement";
     }
   }
 
@@ -611,17 +626,19 @@ export async function POST(req: NextRequest) {
       && Math.abs(chosenDvf.surface_bati - surface) / surface > 0.25
       ? `Surface DVF (${chosenDvf.surface_bati}m²) différente de l'annonce (${surface}m²) — à vérifier`
       : null;
-    const lowConfidence = visionScore !== null && visionScore < 52;
+    const isSurfaceFallback = visionScore === 0 && visionReason === "identification par surface uniquement";
+    const method = isSurfaceFallback ? "dvf_surface" : "dvf_vision";
+    const lowConfidence = isSurfaceFallback || visionScore < 52;
     return NextResponse.json({
-      method: "dvf_vision",
+      method,
       dvf_surface: chosenDvf.surface_bati,
       dvf_terrain: chosenDvf.surface_terrain,
       adresse: chosenDvf.adresse + (chosenDvf.commune ? ", " + chosenDvf.commune : ""),
       lat: chosenDvf.lat, lng: chosenDvf.lng,
       parcel, owner, matched: true, geoportailUrl: dvfGeoUrl,
-      vision_used: true,
-      vision_score: visionScore,
-      vision_reason: visionReason,
+      vision_used: !isSurfaceFallback,
+      vision_score: isSurfaceFallback ? null : visionScore,
+      vision_reason: isSurfaceFallback ? null : visionReason,
       low_confidence: lowConfidence,
       surface_warning: surfaceWarning,
       descriptor: descriptorUsed,

@@ -212,6 +212,7 @@ export default function App() {
   const [selAnnonce, setSelAnnonce] = useState<any>(null);
   const [annoncePhotoIdx, setAnnoncePhotoIdx] = useState(0);
   const [annonceShowDesc, setAnnonceShowDesc] = useState(false);
+  const [cardPhotoIdx, setCardPhotoIdx] = useState<Record<string,number>>({});
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchResult, setMatchResult] = useState<any>(null);
   // Email modal
@@ -515,15 +516,21 @@ export default function App() {
     try {
       // Fetch photos client-side (browser can download them, server cannot due to referer blocking)
       const photos: string[] = [];
-      for (const url of (annonce.photos || []).slice(0, 3)) {
+      for (const url of (annonce.photos || []).slice(0, 5)) {
         try {
           const res = await fetch(url);
           if (!res.ok) continue;
           const buf = await res.arrayBuffer();
-          if (buf.byteLength < 15000) continue;
-          const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-          photos.push(b64);
-          if (photos.length >= 2) break;
+          if (buf.byteLength < 8000) continue;
+          // Chunked btoa — évite le crash stack pour les images > 200KB
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          const CHUNK = 8192;
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+          }
+          photos.push(btoa(binary));
+          if (photos.length >= 3) break;
         } catch {}
       }
       const r = await fetch("/api/match-annonce", {
@@ -2652,9 +2659,20 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                         const isSel = selAnnonce?.id === a.id;
                         return (
                         <div key={a.id} onClick={()=>{setSelAnnonce(isSel?null:a);setMatchResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:C.card,border:`1px solid ${isSel?C.accent:C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s,border-color 0.15s",cursor:"pointer",boxShadow:isSel?`0 0 0 2px ${C.accent}30`:undefined}} onMouseOver={e=>{if(!isSel)e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{if(!isSel)e.currentTarget.style.boxShadow="none";}}>
-                          {a.photos?.[0]?(
-                            <div style={{height:150,background:`url(${a.photos[0]}) center/cover no-repeat`,flexShrink:0,position:"relative"}}>
+                          {a.photos?.length>0?(
+                            <div style={{height:150,background:`url(${a.photos[cardPhotoIdx[a.id]||0]}) center/cover no-repeat`,flexShrink:0,position:"relative"}}>
                               {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
+                              {a.photos.length>1&&(
+                                <>
+                                  <button onClick={e=>{e.stopPropagation();setCardPhotoIdx(m=>({...m,[a.id]:((m[a.id]||0)-1+a.photos.length)%a.photos.length}));}}
+                                    style={{position:"absolute",left:5,top:"50%",transform:"translateY(-50%)",background:"rgba(0,0,0,0.45)",color:"#fff",border:"none",borderRadius:16,width:24,height:24,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>‹</button>
+                                  <button onClick={e=>{e.stopPropagation();setCardPhotoIdx(m=>({...m,[a.id]:((m[a.id]||0)+1)%a.photos.length}));}}
+                                    style={{position:"absolute",right:5,top:"50%",transform:"translateY(-50%)",background:"rgba(0,0,0,0.45)",color:"#fff",border:"none",borderRadius:16,width:24,height:24,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>›</button>
+                                  <div style={{position:"absolute",bottom:5,right:8,fontSize:9,color:"rgba(255,255,255,0.85)",fontWeight:600,background:"rgba(0,0,0,0.35)",borderRadius:4,padding:"1px 5px"}}>
+                                    {(cardPhotoIdx[a.id]||0)+1}/{a.photos.length}
+                                  </div>
+                                </>
+                              )}
                             </div>
                           ):(
                             <div style={{height:150,background:C.surface,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
@@ -2720,7 +2738,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                   </div>
                   {/* Detail panel */}
                   {selAnnonce&&(
-                    <div style={{width:320,flexShrink:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20,position:"sticky",top:16}}>
+                    <div style={{width:320,flexShrink:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20,position:"sticky",top:16,maxHeight:"calc(100vh - 40px)",overflowY:"auto"}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
                         <div style={{fontSize:13,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Bien sélectionné</div>
                         <button onClick={()=>{setSelAnnonce(null);setMatchResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1}}>×</button>
@@ -2761,8 +2779,14 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                             {annonceShowDesc?"Masquer le descriptif":"Voir le descriptif"}
                           </button>
                           {annonceShowDesc&&(
-                            <div style={{marginTop:8,fontSize:11,color:C.text,lineHeight:1.6,background:C.surface,borderRadius:8,padding:"10px 12px",maxHeight:160,overflowY:"auto"}}>
-                              {selAnnonce.description}
+                            <div style={{marginTop:8,fontSize:12,color:C.text,lineHeight:1.7,background:C.surface,borderRadius:8,padding:"12px 14px",maxHeight:200,overflowY:"auto"}}>
+                              {selAnnonce.description
+                                .replace(/([.!?])\s+/g,"$1\n")
+                                .split("\n")
+                                .filter((s:string)=>s.trim().length>0)
+                                .map((s:string,i:number)=>(
+                                  <p key={i} style={{margin:0,marginBottom:6}}>{s.trim()}</p>
+                                ))}
                             </div>
                           )}
                         </div>
@@ -2796,6 +2820,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                             {matchResult.method==="dvf"&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>DVF — haute fiabilité</span>}
                             {matchResult.method==="dvf_vision"&&!matchResult.low_confidence&&<span style={{fontSize:10,color:C.green,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — fiable</span>}
                             {matchResult.method==="dvf_vision"&&matchResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                            {matchResult.method==="dvf_surface"&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>Surface DVF — à confirmer</span>}
                           </div>
                           {matchResult.parcel&&(
                             <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
