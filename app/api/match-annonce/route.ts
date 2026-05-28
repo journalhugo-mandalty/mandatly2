@@ -237,37 +237,113 @@ function filterByTextMatch(pool: any[], titre: string, description: string): any
 
 type OwnerResult = { nom: string; source: string; entreprise: string; qualite?: string; siren?: string };
 
-async function pappersImmoOwner(lat: number, lng: number, apiKey: string): Promise<OwnerResult | null> {
+type PappersImmoData = {
+  owner: OwnerResult | null;
+  proprietaires: Array<{ nom: string; type: "particulier"|"societe"; siren?: string }>;
+  ventes: Array<{ date: string; prix: number; type: string; surface_bati?: number; surface_terrain?: number }>;
+  batiments: Array<{ surface?: number; annee_construction?: number; nature?: string; usage?: string }>;
+  dpe: Array<{ classe_bilan: string; classe_ges?: string; date?: string }>;
+  permis: Array<{ statut: string; date?: string; nature?: string }>;
+  coproprietes: Array<{ nom?: string; nb_lots?: number }>;
+  contenance: number | null;
+  adresse_pappers: string | null;
+};
+
+async function pappersImmoLookup(lat: number, lng: number, apiKey: string): Promise<PappersImmoData | null> {
   if (!apiKey) return null;
   try {
-    const url = `https://api-immobilier.pappers.fr/v1/parcelles?latitude=${lat}&longitude=${lng}&distance=20&bases=proprietaires&champs_supplementaires=proprietaires.personnes_physiques&par_page=1`;
+    const bases = "proprietaires,ventes,batiments,dpe,occupants,permis,coproprietes";
+    const extras = "proprietaires.personnes_physiques";
+    const url = `https://api-immobilier.pappers.fr/v1/parcelles?latitude=${lat}&longitude=${lng}&distance=20&bases=${bases}&champs_supplementaires=${extras}&par_page=1`;
     const r = await fetch(url, {
       headers: { "api-key": apiKey },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
     if (!r.ok) return null;
     const data = await r.json();
-    // search endpoint: { resultats: [ParcelleFiche] }
-    const parcel = data.resultats?.[0] ?? data;
-    const proprietaires: any[] = parcel.proprietaires || [];
-    if (!proprietaires.length) return null;
+    const p = data.resultats?.[0] ?? data;
+    if (!p) return null;
 
-    for (const p of proprietaires) {
-      // Personne physique (particulier)
-      const pps: any[] = p.personnes_physiques || [];
+    // ── Propriétaires ────────────────────────────────────────────────────────
+    const rawProprios: any[] = p.proprietaires || [];
+    let owner: OwnerResult | null = null;
+    const proprietaires: PappersImmoData["proprietaires"] = [];
+
+    for (const rp of rawProprios) {
+      const pps: any[] = rp.personnes_physiques || [];
       if (pps.length > 0) {
-        const pp = pps[0];
-        const nom = pp.nom_complet
-          || [pp.prenoms, pp.nom_usage || pp.nom_patronymique].filter(Boolean).join(" ").trim();
-        if (nom) return { nom, source: "pappers_immo", entreprise: p.nom_entreprise || "", qualite: "Propriétaire" };
-      }
-      // Personne morale (société)
-      if (p.nom_entreprise) {
-        return { nom: p.nom_entreprise, source: "pappers_immo", entreprise: p.nom_entreprise, siren: p.siren || "" };
+        for (const pp of pps) {
+          const nom = pp.nom_complet || [pp.prenoms, pp.nom_usage || pp.nom_patronymique].filter(Boolean).join(" ").trim();
+          if (nom) proprietaires.push({ nom, type: "particulier" });
+        }
+      } else if (rp.nom_entreprise) {
+        proprietaires.push({ nom: rp.nom_entreprise, type: "societe", siren: rp.siren || undefined });
       }
     }
-    return null;
+    if (proprietaires.length > 0) {
+      const first = proprietaires[0];
+      owner = { nom: first.nom, source: "pappers_immo", entreprise: first.type === "societe" ? first.nom : "", siren: first.siren, qualite: first.type === "particulier" ? "Propriétaire" : undefined };
+    }
+
+    // ── Ventes ───────────────────────────────────────────────────────────────
+    const ventes: PappersImmoData["ventes"] = (p.ventes || [])
+      .filter((v: any) => v.prix_vente > 0)
+      .sort((a: any, b: any) => (b.date_vente || "").localeCompare(a.date_vente || ""))
+      .slice(0, 5)
+      .map((v: any) => ({
+        date: v.date_vente_formatee || v.date_vente || "",
+        prix: v.prix_vente || 0,
+        type: v.nature_mutation || "",
+        surface_bati: v.surface_bati || undefined,
+        surface_terrain: v.surface_terrain || undefined,
+      }));
+
+    // ── Bâtiments ────────────────────────────────────────────────────────────
+    const batiments: PappersImmoData["batiments"] = (p.batiments || []).slice(0, 3).map((b: any) => ({
+      surface: b.surface || undefined,
+      annee_construction: b.annee_construction || undefined,
+      nature: b.nature_batiment || undefined,
+      usage: b.usage_batiment || undefined,
+    }));
+
+    // ── DPE ──────────────────────────────────────────────────────────────────
+    const dpe: PappersImmoData["dpe"] = (p.dpe || []).slice(0, 2).map((d: any) => ({
+      classe_bilan: d.classe_bilan_dpe || d.classe_bilan || "",
+      classe_ges: d.classe_ges_dpe || d.classe_ges || undefined,
+      date: d.date_etablissement_dpe_formatee || undefined,
+    }));
+
+    // ── Permis ───────────────────────────────────────────────────────────────
+    const permis: PappersImmoData["permis"] = (p.permis || []).slice(0, 3).map((pm: any) => ({
+      statut: pm.statut_permis || "",
+      date: pm.date_autorisation_permis_formatee || undefined,
+      nature: pm.nature_permis || undefined,
+    }));
+
+    // ── Copropriétés ─────────────────────────────────────────────────────────
+    const coproprietes: PappersImmoData["coproprietes"] = (p.coproprietes || []).slice(0, 2).map((c: any) => ({
+      nom: c.nom_copropriete || undefined,
+      nb_lots: c.nombre_lots || undefined,
+    }));
+
+    return {
+      owner,
+      proprietaires,
+      ventes,
+      batiments,
+      dpe,
+      permis,
+      coproprietes,
+      contenance: p.contenance || null,
+      adresse_pappers: p.adresse || null,
+    };
   } catch { return null; }
+}
+
+// Wrapper pour compatibilité avec findOwner
+async function pappersImmoOwner(lat: number, lng: number, apiKey: string): Promise<OwnerResult | null> {
+  const d = await pappersImmoLookup(lat, lng, apiKey);
+  return d?.owner ?? null;
 }
 
 // ── Pappers entreprises + Sirene ─────────────────────────────────────────────
@@ -656,7 +732,9 @@ export async function POST(req: NextRequest) {
 
   if (chosenDvf) {
     const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
-    const owner = await findOwner(chosenDvf.adresse + ", " + chosenDvf.commune, cp, ville, pappersKey, chosenDvf.lat, chosenDvf.lng, pappersImmoKey);
+    // Pappers Immobilier en priorité (toutes les bases), fallback Sirene si pas de clé
+    const pappersImmo = pappersImmoKey ? await pappersImmoLookup(chosenDvf.lat, chosenDvf.lng, pappersImmoKey) : null;
+    const owner = pappersImmo?.owner ?? await findOwner(chosenDvf.adresse + ", " + chosenDvf.commune, cp, ville, pappersKey);
     const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenDvf.lng,chosenDvf.lat]}))}`, { signal: AbortSignal.timeout(8000) });
     let parcel = null;
     if (parcelRes.ok) {
@@ -684,6 +762,16 @@ export async function POST(req: NextRequest) {
       low_confidence: lowConfidence,
       surface_warning: surfaceWarning,
       descriptor: descriptorUsed,
+      pappers_immo: pappersImmo ? {
+        proprietaires: pappersImmo.proprietaires,
+        ventes: pappersImmo.ventes,
+        batiments: pappersImmo.batiments,
+        dpe: pappersImmo.dpe,
+        permis: pappersImmo.permis,
+        coproprietes: pappersImmo.coproprietes,
+        contenance: pappersImmo.contenance,
+        adresse: pappersImmo.adresse_pappers,
+      } : null,
     });
   }
 

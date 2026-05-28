@@ -2829,46 +2829,77 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               {matchResult.adresse&&<div style={{fontSize:11,color:C.text,marginTop:4,fontWeight:500}}>{matchResult.adresse}</div>}
                             </div>
                           )}
-                          {matchResult.owner?.nom?(
-                            <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
-                              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                                <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em"}}>Propriétaire identifié</div>
-                                {matchResult.owner.source==="pappers"&&<span style={{fontSize:9,fontWeight:700,color:C.blue,background:C.blue+"18",border:`1px solid ${C.blue}30`,borderRadius:3,padding:"1px 5px"}}>Pappers</span>}
+                          {/* Propriétaires */}
+                          {matchResult.pappers_immo?.proprietaires?.length>0?(
+                            <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                              <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>
+                                {matchResult.pappers_immo.proprietaires.length>1?"Propriétaires":"Propriétaire"}
                               </div>
-                              <div style={{fontSize:14,fontWeight:700,color:C.text}}>{matchResult.owner.nom}</div>
-                              {matchResult.owner.qualite&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.qualite}</div>}
+                              {matchResult.pappers_immo.proprietaires.map((p:any,i:number)=>(
+                                <div key={i} style={{marginBottom:i<matchResult.pappers_immo.proprietaires.length-1?6:0}}>
+                                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{p.nom}</div>
+                                  {p.siren&&<a href={`https://www.pappers.fr/entreprise/${p.siren}`} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>SIREN {p.siren} →</a>}
+                                </div>
+                              ))}
+                            </div>
+                          ):matchResult.owner?.nom?(
+                            <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                              <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Propriétaire</div>
+                              <div style={{fontSize:13,fontWeight:700,color:C.text}}>{matchResult.owner.nom}</div>
                               {matchResult.owner.entreprise&&matchResult.owner.entreprise!==matchResult.owner.nom&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.entreprise}</div>}
-                              {matchResult.owner.siren&&(
-                                <a href={`https://www.pappers.fr/entreprise/${matchResult.owner.siren}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:4,fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>
-                                  SIREN {matchResult.owner.siren} →
-                                </a>
-                              )}
+                              {matchResult.owner.siren&&<a href={`https://www.pappers.fr/entreprise/${matchResult.owner.siren}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:4,fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>SIREN {matchResult.owner.siren} →</a>}
                             </div>
                           ):(
-                            <div style={{fontSize:11,color:C.muted,marginBottom:10}}>
-                              Aucun propriétaire trouvé (particulier ou SCI non répertoriée)
-                              {matchResult.adresse&&<span style={{display:"block",marginTop:3,color:C.text,fontWeight:500}}>{matchResult.adresse}</span>}
+                            <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Propriétaire non identifié</div>
+                          )}
+                          {/* Ventes */}
+                          {matchResult.pappers_immo?.ventes?.length>0&&(
+                            <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                              <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Historique ventes</div>
+                              {matchResult.pappers_immo.ventes.map((v:any,i:number)=>(
+                                <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.text,padding:"3px 0",borderBottom:i<matchResult.pappers_immo.ventes.length-1?`1px solid ${C.border}`:"none"}}>
+                                  <span style={{color:C.muted}}>{v.date}</span>
+                                  <span style={{fontWeight:600}}>{v.prix?.toLocaleString("fr-FR")} €</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {/* Bâtiment + DPE */}
+                          {(matchResult.pappers_immo?.batiments?.length>0||matchResult.pappers_immo?.dpe?.length>0)&&(
+                            <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                              <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Bâtiment</div>
+                              {matchResult.pappers_immo.batiments?.[0]&&(
+                                <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>
+                                  {[
+                                    matchResult.pappers_immo.batiments[0].surface&&`${matchResult.pappers_immo.batiments[0].surface} m²`,
+                                    matchResult.pappers_immo.batiments[0].annee_construction&&`Construit en ${matchResult.pappers_immo.batiments[0].annee_construction}`,
+                                    matchResult.pappers_immo.batiments[0].usage,
+                                  ].filter(Boolean).join(" · ")}
+                                </div>
+                              )}
+                              {matchResult.pappers_immo.dpe?.[0]&&(
+                                <div style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
+                                  <span style={{fontSize:11,color:C.muted}}>DPE</span>
+                                  <span style={{fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:4,background:matchResult.pappers_immo.dpe[0].classe_bilan==="A"||matchResult.pappers_immo.dpe[0].classe_bilan==="B"?"#dcfce7":matchResult.pappers_immo.dpe[0].classe_bilan==="F"||matchResult.pappers_immo.dpe[0].classe_bilan==="G"?"#fee2e2":"#fef9c3",color:"#374151"}}>
+                                    {matchResult.pappers_immo.dpe[0].classe_bilan}
+                                  </span>
+                                  {matchResult.pappers_immo.dpe[0].classe_ges&&<span style={{fontSize:11,color:C.muted}}>GES {matchResult.pappers_immo.dpe[0].classe_ges}</span>}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {/* Permis */}
+                          {matchResult.pappers_immo?.permis?.length>0&&(
+                            <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                              <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Permis de construire</div>
+                              {matchResult.pappers_immo.permis.map((pm:any,i:number)=>(
+                                <div key={i} style={{fontSize:11,color:C.text,padding:"2px 0"}}>{pm.statut}{pm.date?` — ${pm.date}`:""}{pm.nature?` (${pm.nature})`:""}</div>
+                              ))}
                             </div>
                           )}
                           {matchResult.surface_warning&&(
                             <div style={{fontSize:11,color:"#c8730a",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:6,padding:"5px 8px",marginBottom:8}}>
                               ⚠ {matchResult.surface_warning}
-                            </div>
-                          )}
-                          {matchResult.descriptor&&(
-                            <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginBottom:8}}>
-                              <div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Descriptif IA</div>
-                              <div style={{fontSize:11,color:C.text,lineHeight:1.5}}>
-                                {[
-                                  matchResult.descriptor.piscine&&`Piscine ${matchResult.descriptor.piscine_forme||""}`,
-                                  matchResult.descriptor.tennis&&"Tennis",
-                                  matchResult.descriptor.etages&&`${matchResult.descriptor.etages} étage(s)`,
-                                  matchResult.descriptor.toiture&&`Toit ${matchResult.descriptor.toiture.replace(/_/g," ")}`,
-                                  matchResult.descriptor.facade_couleur&&`Façade ${matchResult.descriptor.facade_couleur}`,
-                                  matchResult.descriptor.volets&&matchResult.descriptor.volets!=="aucun"&&`Volets ${matchResult.descriptor.volets.replace(/_/g," ")}`,
-                                ].filter(Boolean).join(" · ")}
-                              </div>
-                              {matchResult.descriptor.descriptif&&<div style={{fontSize:11,color:C.muted,marginTop:3,fontStyle:"italic"}}>{matchResult.descriptor.descriptif}</div>}
                             </div>
                           )}
                           {matchResult.vision_score>0&&(
