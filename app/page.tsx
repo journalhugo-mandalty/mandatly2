@@ -2833,6 +2833,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                             <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
                               <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                                 <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em"}}>Propriétaire identifié</div>
+                                {matchResult.owner.source==="pappers_immo"&&<span style={{fontSize:9,fontWeight:700,color:"#1d4ed8",background:"#dbeafe",border:"1px solid #bfdbfe",borderRadius:3,padding:"1px 5px"}}>Pappers Immo</span>}
                                 {matchResult.owner.source==="pappers"&&<span style={{fontSize:9,fontWeight:700,color:C.blue,background:C.blue+"18",border:`1px solid ${C.blue}30`,borderRadius:3,padding:"1px 5px"}}>Pappers</span>}
                               </div>
                               <div style={{fontSize:14,fontWeight:700,color:C.text}}>{matchResult.owner.nom}</div>

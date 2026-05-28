@@ -233,9 +233,44 @@ function filterByTextMatch(pool: any[], titre: string, description: string): any
   });
 }
 
-// ── Pappers ──────────────────────────────────────────────────────────────────
+// ── Pappers Immobilier (Fichiers Fonciers — propriétaires réels) ─────────────
 
 type OwnerResult = { nom: string; source: string; entreprise: string; qualite?: string; siren?: string };
+
+async function pappersImmoOwner(lat: number, lng: number, apiKey: string): Promise<OwnerResult | null> {
+  if (!apiKey) return null;
+  try {
+    const url = `https://api-immobilier.pappers.fr/v1/parcelles?latitude=${lat}&longitude=${lng}&distance=20&bases=proprietaires&champs_supplementaires=proprietaires.personnes_physiques&par_page=1`;
+    const r = await fetch(url, {
+      headers: { "api-key": apiKey },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    // search endpoint: { resultats: [ParcelleFiche] }
+    const parcel = data.resultats?.[0] ?? data;
+    const proprietaires: any[] = parcel.proprietaires || [];
+    if (!proprietaires.length) return null;
+
+    for (const p of proprietaires) {
+      // Personne physique (particulier)
+      const pps: any[] = p.personnes_physiques || [];
+      if (pps.length > 0) {
+        const pp = pps[0];
+        const nom = pp.nom_complet
+          || [pp.prenoms, pp.nom_usage || pp.nom_patronymique].filter(Boolean).join(" ").trim();
+        if (nom) return { nom, source: "pappers_immo", entreprise: p.nom_entreprise || "", qualite: "Propriétaire" };
+      }
+      // Personne morale (société)
+      if (p.nom_entreprise) {
+        return { nom: p.nom_entreprise, source: "pappers_immo", entreprise: p.nom_entreprise, siren: p.siren || "" };
+      }
+    }
+    return null;
+  } catch { return null; }
+}
+
+// ── Pappers entreprises + Sirene ─────────────────────────────────────────────
 
 function pickBestSirene(results: any[]): OwnerResult | null {
   const realEstate = results.find(r => (r.siege?.activite_principale || "").startsWith("68"));
@@ -297,10 +332,16 @@ async function pappersSearch(query: string, pappersKey: string): Promise<OwnerRe
   } catch { return null; }
 }
 
-async function findOwner(adresse: string, cp: string, ville: string, pappersKey: string): Promise<OwnerResult | null> {
+async function findOwner(adresse: string, cp: string, ville: string, pappersKey: string, lat?: number, lng?: number, pappersImmoKey?: string): Promise<OwnerResult | null> {
+  // ── Pappers Immobilier (priorité absolue — vrais Fichiers Fonciers DGFIP) ──
+  if (pappersImmoKey && lat && lng) {
+    const r = await pappersImmoOwner(lat, lng, pappersImmoKey);
+    if (r) return r;
+  }
+
   const keyword = extractLocalityKeyword(adresse);
 
-  // ── Pappers (priorité si clé disponible) ────────────────────────────────
+  // ── Pappers entreprises (SCI/sociétés uniquement) ────────────────────────
   if (pappersKey) {
     // Pass 1 : adresse complète
     const r1 = await pappersSearch(adresse, pappersKey);
@@ -460,6 +501,7 @@ export async function POST(req: NextRequest) {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY manquante" }, { status: 503 });
   const pappersKey = process.env.PAPPERS_API_KEY || "";
+  const pappersImmoKey = process.env.PAPPERS_IMMO_API_KEY || "";
 
   const body = await req.json();
   const { lat, lng, surface = 100, terrain = 0, type = "Maison", ville = "", cp = "", titre = "", description = "", photos = [] }: {
@@ -494,7 +536,7 @@ export async function POST(req: NextRequest) {
 
   if (dvfMatch && dvfMatch.confidence === "high") {
     const [owner, parcelRes] = await Promise.all([
-      findOwner(dvfMatch.adresse + ", " + dvfMatch.commune, cp, ville, pappersKey),
+      findOwner(dvfMatch.adresse + ", " + dvfMatch.commune, cp, ville, pappersKey, dvfMatch.lat, dvfMatch.lng, pappersImmoKey),
       fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[dvfMatch.lng,dvfMatch.lat]}))}`, { signal: AbortSignal.timeout(8000) }),
     ]);
     let parcel = null;
@@ -614,7 +656,7 @@ export async function POST(req: NextRequest) {
 
   if (chosenDvf) {
     const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
-    const owner = await findOwner(chosenDvf.adresse + ", " + chosenDvf.commune, cp, ville, pappersKey);
+    const owner = await findOwner(chosenDvf.adresse + ", " + chosenDvf.commune, cp, ville, pappersKey, chosenDvf.lat, chosenDvf.lng, pappersImmoKey);
     const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenDvf.lng,chosenDvf.lat]}))}`, { signal: AbortSignal.timeout(8000) });
     let parcel = null;
     if (parcelRes.ok) {
