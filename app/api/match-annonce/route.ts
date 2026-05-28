@@ -51,10 +51,36 @@ function parcelCenter(feature: any): [number,number] | null {
   ];
 }
 
-async function getIGNAerial(bbox: string): Promise<string | null> {
+async function getIGNAerial(lat: number, lng: number, padM = 120): Promise<string | null> {
+  // padM : demi-côté en mètres (1m ≈ 0.000009°)
+  const pad = padM * 0.000009;
+  const bbox = `${lng - pad},${lat - pad},${lng + pad},${lat + pad}`;
   try {
     const res = await fetch(
-      `https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image/jpeg&STYLES=&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&CRS=CRS:84&BBOX=${bbox}&WIDTH=320&HEIGHT=320`,
+      `https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image/jpeg&STYLES=&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&CRS=CRS:84&BBOX=${bbox}&WIDTH=480&HEIGHT=480`,
+      { signal: AbortSignal.timeout(12000) }
+    );
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 8000) return null;
+    return Buffer.from(buf).toString("base64");
+  } catch { return null; }
+}
+
+async function getStreetView(lat: number, lng: number, googleKey: string): Promise<string | null> {
+  if (!googleKey) return null;
+  try {
+    // Vérifier disponibilité avant de télécharger
+    const meta = await fetch(
+      `https://maps.googleapis.com/maps/api/streetview/metadata?location=${lat},${lng}&radius=80&key=${googleKey}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (meta.ok) {
+      const m = await meta.json();
+      if (m.status !== "OK") return null;
+    }
+    const res = await fetch(
+      `https://maps.googleapis.com/maps/api/streetview?location=${lat},${lng}&size=640x480&fov=90&radius=80&key=${googleKey}`,
       { signal: AbortSignal.timeout(10000) }
     );
     if (!res.ok) return null;
@@ -62,6 +88,87 @@ async function getIGNAerial(bbox: string): Promise<string | null> {
     if (buf.byteLength < 8000) return null;
     return Buffer.from(buf).toString("base64");
   } catch { return null; }
+}
+
+// Étape 1 : extraire un descriptif visuel précis depuis les photos de l'annonce
+async function extractVisualDescriptor(photosB64: string[], surface: number, type: string, anthropicKey: string): Promise<any | null> {
+  if (!photosB64.length) return null;
+  const content: any[] = [];
+  for (const b64 of photosB64.slice(0, 3)) {
+    content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } });
+  }
+  content.push({ type: "text", text: `Photos d'une annonce : ${type} ~${surface}m². Décris précisément ce bien. JSON UNIQUEMENT :
+{
+  "piscine": true/false,
+  "piscine_forme": "rectangulaire|haricot|infinity|debordement|autre|null",
+  "tennis": true/false,
+  "etages": 1/2/3,
+  "toiture": "tuiles_oranges|tuiles_grises|ardoise|plate|metal",
+  "facade_couleur": "blanc|beige|pierre|ocre|rose|gris",
+  "volets": "bois_brun|bois_vert|blanc|bleu|aucun",
+  "vegetation": "pins|palmiers|oliviers|garrigue|pelouse|mixte",
+  "vue_mer": true/false,
+  "garage": true/false,
+  "portail": true/false,
+  "style": "provencal|contemporain|bastide|mas|moderne",
+  "descriptif": "2-3 phrases distinctives pour retrouver ce bien depuis le ciel ou la rue"
+}` });
+
+  try {
+    const cr = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 400, messages: [{ role: "user", content }] }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!cr.ok) return null;
+    const cd = await cr.json();
+    const txt: string = cd.content?.[0]?.text ?? "";
+    const start = txt.indexOf("{"), end = txt.lastIndexOf("}");
+    if (start >= 0 && end > start) { try { return JSON.parse(txt.slice(start, end+1)); } catch {} }
+  } catch {}
+  return null;
+}
+
+// Étape 2 : scorer un candidat (aerial + streetview) contre le descriptif
+async function scoreCandidateVision(
+  descriptor: any,
+  aerialB64: string,
+  streetB64: string | null,
+  adresse: string,
+  anthropicKey: string
+): Promise<{ score: number; reason: string }> {
+  const content: any[] = [];
+  const descTxt = JSON.stringify(descriptor, null, 0).slice(0, 400);
+
+  content.push({ type: "text", text: `Descriptif extrait des photos de l'annonce :\n${descTxt}` });
+  content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: aerialB64 } });
+  content.push({ type: "text", text: `Vue satellite du candidat "${adresse}".` });
+
+  if (streetB64) {
+    content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: streetB64 } });
+    content.push({ type: "text", text: `Vue Street View du même candidat.` });
+  }
+
+  content.push({ type: "text", text: `Compare le descriptif de l'annonce avec ce candidat. Vérifie point par point : piscine (forme?), toiture (couleur?), végétation, nb étages, tennis. Score de correspondance 0-100. JSON UNIQUEMENT (reason ≤ 15 mots) : {"score":N,"reason":"..."}. score<35 si critère majeur ne correspond pas.` });
+
+  try {
+    const cr = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 120, messages: [{ role: "user", content }] }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (cr.ok) {
+      const cd = await cr.json();
+      const txt: string = cd.content?.[0]?.text ?? "";
+      const start = txt.indexOf("{"), end = txt.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        try { return JSON.parse(txt.slice(start, end+1)); } catch {}
+      }
+    }
+  } catch {}
+  return { score: 0, reason: "erreur vision" };
 }
 
 async function fetchPhotoB64(url: string): Promise<string | null> {
@@ -420,75 +527,62 @@ export async function POST(req: NextRequest) {
     if (listingB64) break;
   }
 
-  // ── 2. Vision IA sur locations DVF (vraies coordonnées GPS) ─────────────
-  // Les coords Bien'ici sont un centroïde de ville — inutilisables pour IGN.
-  // À la place on utilise les positions RÉELLES des mutations DVF de la commune.
+  // ── 2. Vision IA 2 étapes : descriptor → scoring par candidat ──────────────
+  const googleKey = process.env.GOOGLE_STREETVIEW_KEY || "";
   const dvfTypePool = dvfPool.allTypePool;
-  let visionResult: { match_index: number; confidence: number; reason: string } | null = null;
-  type DvfCandidate = { adresse: string; commune: string; surface_bati: number; surface_terrain: number; lat: number; lng: number; aerial?: string | null };
-  let dvfVisionCandidates: DvfCandidate[] = [];
+  type DvfCandidate = { adresse: string; commune: string; surface_bati: number; surface_terrain: number; lat: number; lng: number };
+  let chosenDvf: DvfCandidate | null = null;
+  let visionScore = 0;
+  let visionReason = "";
+  let descriptorUsed: any = null;
 
-  if (listingB64 && dvfTypePool.length > 0) {
-    // Si DVF a trouvé 2-5 candidats (medium confidence), utiliser CES candidats précis
-    // Sinon, prendre les 6 plus proches en surface dans tout le pool
+  const allPhotosB64: string[] = listingB64 ? [listingB64] : [];
+
+  if (allPhotosB64.length > 0 && dvfTypePool.length > 0) {
+    // Candidats : medium confidence DVF en priorité, sinon les 7 plus proches en surface
     const medCandidates = dvfMatch?.confidence === "medium" && dvfMatch.candidates?.length
       ? dvfMatch.candidates
       : null;
-    const sorted = medCandidates
+    const candidates: DvfCandidate[] = medCandidates
       ? medCandidates
       : [...dvfTypePool]
           .filter(r => r.surface_bati >= surface * 0.55 && r.surface_bati <= surface * 1.80)
           .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
-          .slice(0, 6);
+          .slice(0, 7);
 
-    // Vue aérienne IGN à chaque coordonnée DVF réelle
-    const aerialResults = await Promise.all(
-      sorted.map(async r => {
-        // bbox ~80m autour du point DVF
-        const pad = 0.0006;
-        const bbox = `${r.lng - pad},${r.lat - pad},${r.lng + pad},${r.lat + pad}`;
-        return { ...r, aerial: await getIGNAerial(bbox) };
-      })
-    );
-    dvfVisionCandidates = aerialResults.filter(r => r.aerial);
+    // Étape 1 : extraire le descriptif visuel des photos de l'annonce
+    const descriptor = await extractVisualDescriptor(allPhotosB64, surface, type, anthropicKey);
+    descriptorUsed = descriptor;
 
-    if (dvfVisionCandidates.length > 0) {
-      const content: any[] = [];
-      content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: listingB64 } });
-      content.push({ type: "text", text: `Photo d'une annonce immobilière : ${type} ~${surface}m², commune de ${ville}.` });
+    // Étape 2 : pour chaque candidat, récupérer aerial + street view puis scorer
+    if (candidates.length > 0) {
+      const scored = await Promise.all(
+        candidates.map(async r => {
+          const [aerialB64, streetB64] = await Promise.all([
+            getIGNAerial(r.lat, r.lng, 130),
+            getStreetView(r.lat, r.lng, googleKey),
+          ]);
+          if (!aerialB64) return { ...r, score: 0, reason: "pas de satellite" };
+          if (!descriptor) {
+            // Pas de descriptif → fallback comparaison directe listing vs aerial
+            return { ...r, score: 30, reason: "descriptif indisponible" };
+          }
+          const result = await scoreCandidateVision(descriptor, aerialB64, streetB64, r.adresse, anthropicKey);
+          return { ...r, score: result.score, reason: result.reason };
+        })
+      );
 
-      dvfVisionCandidates.forEach((c, i) => {
-        content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: c.aerial! } });
-        content.push({ type: "text", text: `Vue satellite candidat ${i+1} : ${c.adresse} (${c.surface_bati}m² bâti)` });
-      });
-
-      content.push({ type: "text", text: `Compare la photo de l'annonce aux ${dvfVisionCandidates.length} vues satellites. Critères : piscine, toiture, végétation, forme du bâtiment. JSON UNIQUEMENT (reason < 20 mots) : {"match_index":N,"confidence":0-100,"reason":"..."}. match_index 1-based, 0=aucun. confidence<40 si incertain.` });
-
-      try {
-        const cr = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
-          body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 150, messages: [{ role: "user", content }] }),
-          signal: AbortSignal.timeout(40000),
-        });
-        if (cr.ok) {
-          const cd = await cr.json();
-          const txt: string = cd.content?.[0]?.text ?? "";
-          const start = txt.indexOf("{"), end = txt.lastIndexOf("}");
-          if (start >= 0 && end > start) { try { visionResult = JSON.parse(txt.slice(start, end+1)); } catch {} }
-        }
-      } catch {}
+      // Trier par score décroissant, garder le meilleur si score ≥ 45
+      scored.sort((a, b) => b.score - a.score);
+      if (scored[0]?.score >= 45) {
+        chosenDvf = scored[0];
+        visionScore = scored[0].score;
+        visionReason = scored[0].reason;
+      }
     }
   }
 
   // ── 3. Résultat Vision IA ─────────────────────────────────────────────────
-  const matchIdx = visionResult && visionResult.confidence >= 50
-    ? visionResult.match_index - 1
-    : -1;
-
-  const chosenDvf = matchIdx >= 0 && matchIdx < dvfVisionCandidates.length
-    ? dvfVisionCandidates[matchIdx]
-    : null;
 
   if (chosenDvf) {
     const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
@@ -502,14 +596,14 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({
       method: "dvf_vision",
-      dvf_confidence: "medium",
       dvf_surface: chosenDvf.surface_bati,
       dvf_terrain: chosenDvf.surface_terrain,
       adresse: chosenDvf.adresse + (chosenDvf.commune ? ", " + chosenDvf.commune : ""),
       parcel, owner, matched: true, geoportailUrl: dvfGeoUrl,
       vision_used: true,
-      vision_confidence: visionResult?.confidence ?? null,
-      vision_reason: visionResult?.reason ?? null,
+      vision_score: visionScore,
+      vision_reason: visionReason,
+      descriptor: descriptorUsed,
     });
   }
 
@@ -521,9 +615,10 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     matched: false,
-    vision_used: listingB64 !== null,
-    vision_confidence: visionResult?.confidence ?? null,
-    vision_reason: visionResult?.reason ?? null,
+    vision_used: allPhotosB64.length > 0,
+    vision_score: visionScore || null,
+    vision_reason: visionReason || null,
+    descriptor: descriptorUsed,
     dvf_candidates: dvfBruts.length > 0 ? dvfBruts : undefined,
     geoportailUrl,
     message: dvfTypePool.length === 0

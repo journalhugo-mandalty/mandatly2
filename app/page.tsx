@@ -2814,9 +2814,26 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               ))}
                             </div>
                           )}
-                          {matchResult.vision_confidence!==null&&(
+                          {matchResult.descriptor&&(
+                            <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginBottom:8}}>
+                              <div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Descriptif IA extrait</div>
+                              <div style={{fontSize:11,color:C.text,lineHeight:1.5}}>
+                                {[
+                                  matchResult.descriptor.piscine&&`Piscine ${matchResult.descriptor.piscine_forme||""}`,
+                                  matchResult.descriptor.tennis&&"Tennis",
+                                  matchResult.descriptor.etages&&`${matchResult.descriptor.etages} étage(s)`,
+                                  matchResult.descriptor.toiture&&`Toit ${matchResult.descriptor.toiture.replace(/_/g," ")}`,
+                                  matchResult.descriptor.facade_couleur&&`Façade ${matchResult.descriptor.facade_couleur}`,
+                                  matchResult.descriptor.volets&&matchResult.descriptor.volets!=="aucun"&&`Volets ${matchResult.descriptor.volets.replace(/_/g," ")}`,
+                                  matchResult.descriptor.vegetation&&`Végétation ${matchResult.descriptor.vegetation}`,
+                                ].filter(Boolean).join(" · ")}
+                              </div>
+                              {matchResult.descriptor.descriptif&&<div style={{fontSize:11,color:C.muted,marginTop:3,fontStyle:"italic"}}>{matchResult.descriptor.descriptif}</div>}
+                            </div>
+                          )}
+                          {matchResult.vision_score!==null&&matchResult.vision_score>0&&(
                             <div style={{fontSize:11,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
-                              Confiance vision: {matchResult.vision_confidence}%
+                              Score correspondance visuelle : {matchResult.vision_score}%
                               {matchResult.vision_reason&&<span style={{display:"block",marginTop:1}}>{matchResult.vision_reason}</span>}
                             </div>
                           )}
