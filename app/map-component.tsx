@@ -25,7 +25,7 @@ const TILE_SAT   = "https://server.arcgisonline.com/ArcGIS/rest/services/World_I
 // Zoom thresholds
 const Z_COMMUNE = 9;
 const Z_SECTION = 13;
-const Z_PARCEL  = 15;
+const Z_PARCEL  = 13;
 
 // Colours – same palette as Pappers Immo
 const C_DVF  = "#7C3AED"; // violet – ventes DVF / prospecteur
@@ -349,30 +349,21 @@ export default function MapComponent({
     parcLayerRef.current = L.geoJSON(parcCache.current, {
       style: (feature: any) => {
         const coords = feature.geometry?.coordinates;
-        if (!coords) return {};
-        const dvf  = lrs?.ventes        ? ps.filter(p=>p.lat&&p.lng&&p.source!=="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
-        const dpe  = lrs?.dpe           ? ps.filter(p=>p.lat&&p.lng&&p.source==="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
+        if (!coords) return { color: C_NONE, weight: 0.8, fillColor: C_NONE, fillOpacity: 0.06, opacity: 0.35 };
+        const dvf  = lrs?.ventes ? ps.filter(p=>p.lat&&p.lng&&p.source!=="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
+        const dpe  = lrs?.dpe   ? ps.filter(p=>p.lat&&p.lng&&p.source==="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
         const hasSig = dvf.length > 0 || dpe.length > 0;
         const col = dvf.length ? C_DVF : dpe.length ? C_DPE : C_NONE;
-        return { color:col, weight: hasSig?2:0.8, fillOpacity:0, opacity: hasSig?0.9:0.35 };
+        return { color: col, weight: hasSig ? 2 : 0.8, fillColor: col, fillOpacity: hasSig ? 0.22 : 0.06, opacity: hasSig ? 0.9 : 0.35 };
       },
       onEachFeature: (feature: any, layer: any) => {
         const coords = feature.geometry?.coordinates;
         if (!coords) return;
         const { section, numero, contenance, code_insee } = feature.properties||{};
-        const ps2 = prospectsRef.current;
-        const lrs2 = layersRef.current;
-        const dvf  = (lrs2?.ventes) ? ps2.filter(p=>p.lat&&p.lng&&p.source!=="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
-        const dpe  = (lrs2?.dpe)   ? ps2.filter(p=>p.lat&&p.lng&&p.source==="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
+        const dvf  = lrs?.ventes ? ps.filter(p=>p.lat&&p.lng&&p.source!=="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
+        const dpe  = lrs?.dpe   ? ps.filter(p=>p.lat&&p.lng&&p.source==="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
         const matching = [...dvf, ...dpe];
         const hasSig = matching.length > 0;
-        const pid = dvf.length ? "ml-hv" : dpe.length ? "ml-hg" : "ml-hn";
-
-        layer.on("add", () => {
-          injectPatterns(map);
-          const el = layer.getElement?.();
-          if (el) { el.setAttribute("fill", `url(#${pid})`); el.setAttribute("fill-opacity","1"); }
-        });
         layer.bindTooltip(
           `<div style="font-family:-apple-system,sans-serif;min-width:160px;"><div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:3px;">Section ${section} · ${numero}</div><div style="font-size:10px;color:rgba(255,255,255,0.45);">${contenance??""} m² · ${code_insee||""}</div>${hasSig?`<div style="font-size:10px;color:${dvf.length?C_DVF:C_DPE};margin-top:3px;font-weight:600;">${dvf.length?"Signal DVF":"Signal DPE"}</div>`:""}</div>`,
           { className:"mandatly-tooltip", sticky:false }
@@ -385,6 +376,20 @@ export default function MapComponent({
         });
       },
     }).addTo(map);
+    // Apply SVG hatch patterns on top of the solid fill
+    injectPatterns(map);
+    setTimeout(() => {
+      if (!parcLayerRef.current) return;
+      parcLayerRef.current.eachLayer((sub: any) => {
+        const coords = sub.feature?.geometry?.coordinates;
+        if (!coords) return;
+        const dvf = lrs?.ventes ? ps.filter(p=>p.lat&&p.lng&&p.source!=="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
+        const dpe = lrs?.dpe   ? ps.filter(p=>p.lat&&p.lng&&p.source==="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
+        const pid = dvf.length ? "ml-hv" : dpe.length ? "ml-hg" : "ml-hn";
+        const el = sub.getElement?.();
+        if (el) { el.setAttribute("fill", `url(#${pid})`); el.setAttribute("fill-opacity","1"); }
+      });
+    }, 120);
     markersRef.current.forEach(m => m.bringToFront?.());
   };
 
@@ -454,7 +459,7 @@ export default function MapComponent({
 
         {/* Zoom level indicator */}
         <div style={{position:"absolute",bottom:40,right:48,zIndex:1000,background:"rgba(10,16,28,0.75)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6,padding:"3px 8px",fontSize:9,color:"rgba(255,255,255,0.5)",fontWeight:600,backdropFilter:"blur(6px)",letterSpacing:"0.05em"}}>
-          {zoom < Z_COMMUNE ? "DÉPARTEMENTS" : zoom < Z_PARCEL ? "COMMUNES" : "PARCELLES"}
+          {zoom < Z_COMMUNE ? "DÉPARTEMENTS" : zoom < Z_PARCEL ? "COMMUNES" : "PARCELLES CADASTRALES"}
         </div>
 
         {/* Legend */}

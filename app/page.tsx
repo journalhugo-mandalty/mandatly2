@@ -587,8 +587,7 @@ export default function App() {
     }
     const sorted = all
       .filter(p=>!radarDone.has(String(p.id)))
-      .sort((a,b)=>b.score-a.score)
-      .slice(0,60);
+      .sort((a,b)=>b.score-a.score);
     setRadarProspects(sorted);
     setRadarLoading(false);
     setRadarView("map");
