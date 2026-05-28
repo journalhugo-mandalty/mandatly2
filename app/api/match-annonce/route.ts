@@ -533,7 +533,7 @@ export async function POST(req: NextRequest) {
   // ── 2. Vision IA 2 étapes : descriptor → scoring par candidat ──────────────
   const googleKey = process.env.GOOGLE_STREETVIEW_KEY || "";
   const dvfTypePool = dvfPool.allTypePool;
-  type DvfCandidate = { adresse: string; commune: string; surface_bati: number; surface_terrain: number; lat: number; lng: number };
+  type DvfCandidate = { adresse: string; commune: string; surface_bati: number; surface_terrain: number; lat: number; lng: number; __score?: number };
   let chosenDvf: DvfCandidate | null = null;
   let visionScore = 0;
   let visionReason = "";
@@ -575,12 +575,22 @@ export async function POST(req: NextRequest) {
         })
       );
 
-      // Trier par score décroissant, garder le meilleur si score ≥ 52
+      // Trier par score décroissant
       scored.sort((a, b) => b.score - a.score);
       if (scored[0]?.score >= 52) {
+        // Haute confiance
         chosenDvf = scored[0];
         visionScore = scored[0].score;
         visionReason = scored[0].reason;
+      } else if (scored[0]?.score >= 35) {
+        // Correspondance probable — on renvoie quand même avec flag low_confidence
+        chosenDvf = scored[0];
+        visionScore = scored[0].score;
+        visionReason = scored[0].reason;
+      }
+      // Stocker les scores pour les retourner dans dvf_candidates si pas de match
+      if (!chosenDvf) {
+        (scored as any[]).forEach((s, i) => { candidates[i].__score = s.score; });
       }
     }
   }
@@ -601,25 +611,38 @@ export async function POST(req: NextRequest) {
       && Math.abs(chosenDvf.surface_bati - surface) / surface > 0.25
       ? `Surface DVF (${chosenDvf.surface_bati}m²) différente de l'annonce (${surface}m²) — à vérifier`
       : null;
+    const lowConfidence = visionScore !== null && visionScore < 52;
     return NextResponse.json({
       method: "dvf_vision",
       dvf_surface: chosenDvf.surface_bati,
       dvf_terrain: chosenDvf.surface_terrain,
       adresse: chosenDvf.adresse + (chosenDvf.commune ? ", " + chosenDvf.commune : ""),
+      lat: chosenDvf.lat, lng: chosenDvf.lng,
       parcel, owner, matched: true, geoportailUrl: dvfGeoUrl,
       vision_used: true,
       vision_score: visionScore,
       vision_reason: visionReason,
+      low_confidence: lowConfidence,
       surface_warning: surfaceWarning,
       descriptor: descriptorUsed,
     });
   }
 
-  // ── 4. Aucun match — retourner les candidats DVF bruts pour info ───────────
+  // ── 4. Aucun match — retourner les candidats DVF avec lat/lng pour comparaison visuelle ───
   const dvfBruts = dvfTypePool
     .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
     .slice(0, 5)
-    .map(r => ({ adresse: r.adresse + (r.commune ? ", " + r.commune : ""), surface_bati: r.surface_bati, surface_terrain: r.surface_terrain }));
+    .map(r => ({
+      adresse: r.adresse + (r.commune ? ", " + r.commune : ""),
+      surface_bati: r.surface_bati,
+      surface_terrain: r.surface_terrain,
+      lat: r.lat,
+      lng: r.lng,
+      vision_score: (r as any).__score ?? null,
+      geoportailUrl: r.lat && r.lng
+        ? `https://www.geoportail.gouv.fr/carte?c=${r.lng},${r.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`
+        : null,
+    }));
 
   return NextResponse.json({
     matched: false,

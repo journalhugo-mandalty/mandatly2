@@ -210,6 +210,8 @@ export default function App() {
   const [annoncesTypeFilter, setAnnoncesTypeFilter] = useState<""|"Maison"|"Appartement">("");
   const [annoncesSort, setAnnoncesSort] = useState<"prix_asc"|"prix_desc"|"surface_desc">("prix_asc");
   const [selAnnonce, setSelAnnonce] = useState<any>(null);
+  const [annoncePhotoIdx, setAnnoncePhotoIdx] = useState(0);
+  const [annonceShowDesc, setAnnonceShowDesc] = useState(false);
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchResult, setMatchResult] = useState<any>(null);
   // Email modal
@@ -499,7 +501,7 @@ export default function App() {
     if (!ville.trim() || annoncesLoading) return;
     setAnnoncesLoading(true); setAnnoncesError(""); setAnnonces([]);
     try {
-      const r = await fetch(`/api/annonces?ville=${encodeURIComponent(ville)}&size=60`);
+      const r = await fetch(`/api/annonces?ville=${encodeURIComponent(ville)}&size=300`);
       const d = await r.json();
       if (d.error) throw new Error(d.error);
       setAnnonces(d.annonces || []);
@@ -2649,7 +2651,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                         const prixM2 = a.prix && a.surface && a.surface > 0 ? Math.round(a.prix / a.surface) : null;
                         const isSel = selAnnonce?.id === a.id;
                         return (
-                        <div key={a.id} onClick={()=>{setSelAnnonce(isSel?null:a);setMatchResult(null);}} style={{background:C.card,border:`1px solid ${isSel?C.accent:C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s,border-color 0.15s",cursor:"pointer",boxShadow:isSel?`0 0 0 2px ${C.accent}30`:undefined}} onMouseOver={e=>{if(!isSel)e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{if(!isSel)e.currentTarget.style.boxShadow="none";}}>
+                        <div key={a.id} onClick={()=>{setSelAnnonce(isSel?null:a);setMatchResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:C.card,border:`1px solid ${isSel?C.accent:C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s,border-color 0.15s",cursor:"pointer",boxShadow:isSel?`0 0 0 2px ${C.accent}30`:undefined}} onMouseOver={e=>{if(!isSel)e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{if(!isSel)e.currentTarget.style.boxShadow="none";}}>
                           {a.photos?.[0]?(
                             <div style={{height:150,background:`url(${a.photos[0]}) center/cover no-repeat`,flexShrink:0,position:"relative"}}>
                               {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
@@ -2721,10 +2723,24 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                     <div style={{width:320,flexShrink:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20,position:"sticky",top:16}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
                         <div style={{fontSize:13,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Bien sélectionné</div>
-                        <button onClick={()=>{setSelAnnonce(null);setMatchResult(null);}} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1}}>×</button>
+                        <button onClick={()=>{setSelAnnonce(null);setMatchResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1}}>×</button>
                       </div>
-                      {selAnnonce.photos?.[0]&&(
-                        <div style={{height:160,background:`url(${selAnnonce.photos[0]}) center/cover no-repeat`,borderRadius:10,marginBottom:14}}/>
+                      {/* Carousel photos */}
+                      {selAnnonce.photos?.length>0&&(
+                        <div style={{position:"relative",height:180,borderRadius:10,overflow:"hidden",marginBottom:12,background:C.surface}}>
+                          <div style={{height:"100%",background:`url(${selAnnonce.photos[annoncePhotoIdx]}) center/cover no-repeat`}}/>
+                          {selAnnonce.photos.length>1&&(
+                            <>
+                              <button onClick={e=>{e.stopPropagation();setAnnoncePhotoIdx(i=>(i-1+selAnnonce.photos.length)%selAnnonce.photos.length);}}
+                                style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",background:"rgba(0,0,0,0.45)",color:"#fff",border:"none",borderRadius:20,width:28,height:28,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+                              <button onClick={e=>{e.stopPropagation();setAnnoncePhotoIdx(i=>(i+1)%selAnnonce.photos.length);}}
+                                style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"rgba(0,0,0,0.45)",color:"#fff",border:"none",borderRadius:20,width:28,height:28,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+                              <div style={{position:"absolute",bottom:6,left:0,right:0,textAlign:"center",fontSize:10,color:"rgba(255,255,255,0.85)",fontWeight:600}}>
+                                {annoncePhotoIdx+1}/{selAnnonce.photos.length}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       )}
                       <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>
                         {selAnnonce.prix ? `${selAnnonce.prix.toLocaleString("fr-FR")} €` : "Prix NC"}
@@ -2734,13 +2750,26 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                         {selAnnonce.pieces ? ` · ${selAnnonce.pieces} pièces` : ""}
                         {selAnnonce.type ? ` · ${selAnnonce.type}` : ""}
                       </div>
-                      <div style={{fontSize:12,color:C.muted,marginBottom:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      <div style={{fontSize:12,color:C.muted,marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {selAnnonce.ville}{selAnnonce.cp ? ` ${selAnnonce.cp}` : ""}
                         {selAnnonce.agence ? ` · ${selAnnonce.agence}` : ""}
                       </div>
+                      {/* Descriptif toggle */}
+                      {selAnnonce.description&&(
+                        <div style={{marginBottom:10}}>
+                          <button onClick={()=>setAnnonceShowDesc(v=>!v)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.muted,cursor:"pointer",fontWeight:500}}>
+                            {annonceShowDesc?"Masquer le descriptif":"Voir le descriptif"}
+                          </button>
+                          {annonceShowDesc&&(
+                            <div style={{marginTop:8,fontSize:11,color:C.text,lineHeight:1.6,background:C.surface,borderRadius:8,padding:"10px 12px",maxHeight:160,overflowY:"auto"}}>
+                              {selAnnonce.description}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {selAnnonce.url&&(
-                        <a href={selAnnonce.url} target="_blank" rel="noopener noreferrer" style={{display:"block",fontSize:12,color:C.accent,marginBottom:16,textDecoration:"none",fontWeight:600}}>
-                          Voir l'annonce →
+                        <a href={selAnnonce.url} target="_blank" rel="noopener noreferrer" style={{display:"block",fontSize:12,color:C.accent,marginBottom:14,textDecoration:"none",fontWeight:600}}>
+                          Voir l'annonce complète →
                         </a>
                       )}
                       {/* Identify button */}
@@ -2759,25 +2788,20 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                           <br/>~10 secondes
                         </div>
                       )}
-                      {/* Match result */}
-                      {matchResult&&!matchResult.error&&(
+                      {/* Match result — bien identifié */}
+                      {matchResult&&!matchResult.error&&matchResult.matched&&(
                         <div style={{marginTop:4}}>
                           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
                             <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Résultat</div>
                             {matchResult.method==="dvf"&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>DVF — haute fiabilité</span>}
-                            {matchResult.method!=="dvf"&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                            {matchResult.method==="dvf_vision"&&!matchResult.low_confidence&&<span style={{fontSize:10,color:C.green,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — fiable</span>}
+                            {matchResult.method==="dvf_vision"&&matchResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
                           </div>
                           {matchResult.parcel&&(
                             <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
-                              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>
-                                Parcelle {matchResult.parcel.section}{matchResult.parcel.numero}
-                              </div>
-                              <div style={{fontSize:11,color:C.muted}}>
-                                {matchResult.parcel.contenance} m² · {matchResult.parcel.commune}
-                              </div>
-                              {matchResult.adresse&&(
-                                <div style={{fontSize:11,color:C.text,marginTop:4,fontWeight:500}}>{matchResult.adresse}</div>
-                              )}
+                              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>Parcelle {matchResult.parcel.section}{matchResult.parcel.numero}</div>
+                              <div style={{fontSize:11,color:C.muted}}>{matchResult.parcel.contenance} m² · {matchResult.parcel.commune}</div>
+                              {matchResult.adresse&&<div style={{fontSize:11,color:C.text,marginTop:4,fontWeight:500}}>{matchResult.adresse}</div>}
                             </div>
                           )}
                           {matchResult.owner?.nom?(
@@ -2788,12 +2812,9 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               </div>
                               <div style={{fontSize:14,fontWeight:700,color:C.text}}>{matchResult.owner.nom}</div>
                               {matchResult.owner.qualite&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.qualite}</div>}
-                              {matchResult.owner.entreprise&&matchResult.owner.entreprise!==matchResult.owner.nom&&(
-                                <div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.entreprise}</div>
-                              )}
+                              {matchResult.owner.entreprise&&matchResult.owner.entreprise!==matchResult.owner.nom&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.entreprise}</div>}
                               {matchResult.owner.siren&&(
-                                <a href={`https://www.pappers.fr/entreprise/${matchResult.owner.siren}`} target="_blank" rel="noopener noreferrer"
-                                  style={{display:"inline-block",marginTop:4,fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>
+                                <a href={`https://www.pappers.fr/entreprise/${matchResult.owner.siren}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:4,fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>
                                   SIREN {matchResult.owner.siren} →
                                 </a>
                               )}
@@ -2804,19 +2825,14 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               {matchResult.adresse&&<span style={{display:"block",marginTop:3,color:C.text,fontWeight:500}}>{matchResult.adresse}</span>}
                             </div>
                           )}
-                          {matchResult.dvf_candidates?.length>1&&(
-                            <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginBottom:8}}>
-                              <div style={{fontSize:10,color:C.amber,fontWeight:600,marginBottom:6}}>Autres candidats DVF ({matchResult.dvf_candidates.length}) :</div>
-                              {matchResult.dvf_candidates.slice(1).map((c:any,i:number)=>(
-                                <div key={i} style={{fontSize:11,color:C.muted,padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
-                                  {c.adresse} · {c.surface_bati}m² {c.surface_terrain>0?`terrain ${c.surface_terrain}m²`:""}
-                                </div>
-                              ))}
+                          {matchResult.surface_warning&&(
+                            <div style={{fontSize:11,color:"#c8730a",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:6,padding:"5px 8px",marginBottom:8}}>
+                              ⚠ {matchResult.surface_warning}
                             </div>
                           )}
                           {matchResult.descriptor&&(
                             <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginBottom:8}}>
-                              <div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Descriptif IA extrait</div>
+                              <div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Descriptif IA</div>
                               <div style={{fontSize:11,color:C.text,lineHeight:1.5}}>
                                 {[
                                   matchResult.descriptor.piscine&&`Piscine ${matchResult.descriptor.piscine_forme||""}`,
@@ -2825,20 +2841,14 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                                   matchResult.descriptor.toiture&&`Toit ${matchResult.descriptor.toiture.replace(/_/g," ")}`,
                                   matchResult.descriptor.facade_couleur&&`Façade ${matchResult.descriptor.facade_couleur}`,
                                   matchResult.descriptor.volets&&matchResult.descriptor.volets!=="aucun"&&`Volets ${matchResult.descriptor.volets.replace(/_/g," ")}`,
-                                  matchResult.descriptor.vegetation&&`Végétation ${matchResult.descriptor.vegetation}`,
                                 ].filter(Boolean).join(" · ")}
                               </div>
                               {matchResult.descriptor.descriptif&&<div style={{fontSize:11,color:C.muted,marginTop:3,fontStyle:"italic"}}>{matchResult.descriptor.descriptif}</div>}
                             </div>
                           )}
-                          {matchResult.surface_warning&&(
-                            <div style={{fontSize:11,color:"#c8730a",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:6,padding:"5px 8px",marginTop:4}}>
-                              ⚠ {matchResult.surface_warning}
-                            </div>
-                          )}
-                          {matchResult.vision_score!==null&&matchResult.vision_score>0&&(
+                          {matchResult.vision_score>0&&(
                             <div style={{fontSize:11,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
-                              Score correspondance visuelle : {matchResult.vision_score}%
+                              Score correspondance : {matchResult.vision_score}%
                               {matchResult.vision_reason&&<span style={{display:"block",marginTop:1}}>{matchResult.vision_reason}</span>}
                             </div>
                           )}
@@ -2848,9 +2858,61 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               Vue satellite IGN →
                             </a>
                           )}
-                          <button onClick={()=>setMatchResult(null)} style={{marginTop:8,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>
-                            Réessayer
-                          </button>
+                          <button onClick={()=>setMatchResult(null)} style={{marginTop:8,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>Réessayer</button>
+                        </div>
+                      )}
+                      {/* Match result — bien non identifié : candidats DVF à comparer */}
+                      {matchResult&&!matchResult.error&&!matchResult.matched&&(
+                        <div style={{marginTop:4}}>
+                          <div style={{fontSize:11,color:C.amber,fontWeight:600,marginBottom:8}}>
+                            Bien non identifié — comparez les candidats ci-dessous avec les photos de l'annonce
+                          </div>
+                          {matchResult.descriptor&&(
+                            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:11,color:C.text,lineHeight:1.5}}>
+                              <div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.05em"}}>Descriptif IA de l'annonce</div>
+                              {[
+                                matchResult.descriptor.piscine&&`Piscine ${matchResult.descriptor.piscine_forme||""}`,
+                                matchResult.descriptor.tennis&&"Tennis",
+                                matchResult.descriptor.etages&&`${matchResult.descriptor.etages} étage(s)`,
+                                matchResult.descriptor.toiture&&`Toit ${matchResult.descriptor.toiture.replace(/_/g," ")}`,
+                                matchResult.descriptor.facade_couleur&&`Façade ${matchResult.descriptor.facade_couleur}`,
+                                matchResult.descriptor.volets&&matchResult.descriptor.volets!=="aucun"&&`Volets ${matchResult.descriptor.volets.replace(/_/g," ")}`,
+                              ].filter(Boolean).join(" · ")}
+                              {matchResult.descriptor.descriptif&&<div style={{color:C.muted,marginTop:2,fontStyle:"italic"}}>{matchResult.descriptor.descriptif}</div>}
+                            </div>
+                          )}
+                          {(matchResult.dvf_candidates||[]).map((c:any,i:number)=>{
+                            const ignUrl = c.lat&&c.lng
+                              ? `https://data.geopf.fr/wms-r/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&FORMAT=image/jpeg&WIDTH=280&HEIGHT=160&SRS=EPSG:4326&BBOX=${c.lng-0.0018},${c.lat-0.001},${c.lng+0.0018},${c.lat+0.001}`
+                              : null;
+                            return (
+                              <div key={i} style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:10}}>
+                                {ignUrl&&(
+                                  <div style={{position:"relative",height:120,background:C.surface}}>
+                                    <img src={ignUrl} alt="Vue satellite" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{(e.target as HTMLImageElement).style.display="none";}}/>
+                                    {c.vision_score!==null&&c.vision_score>0&&(
+                                      <div style={{position:"absolute",top:6,right:6,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px"}}>
+                                        Score {c.vision_score}%
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                <div style={{padding:"8px 10px"}}>
+                                  <div style={{fontSize:11,fontWeight:600,color:C.text,marginBottom:2}}>{c.adresse}</div>
+                                  <div style={{fontSize:10,color:C.muted,marginBottom:6}}>
+                                    {c.surface_bati}m² bâti{c.surface_terrain>0?` · ${c.surface_terrain}m² terrain`:""}
+                                  </div>
+                                  {c.geoportailUrl&&(
+                                    <a href={c.geoportailUrl} target="_blank" rel="noopener noreferrer"
+                                      style={{fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>
+                                      Ouvrir sur Geoportail →
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <button onClick={()=>setMatchResult(null)} style={{marginTop:4,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>Réessayer</button>
                         </div>
                       )}
                       {matchResult?.error&&(

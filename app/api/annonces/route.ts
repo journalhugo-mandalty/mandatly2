@@ -88,7 +88,7 @@ function mapBieniciAd(a: any, nomVille: string): any | null {
     ville: a.city || nomVille,
     cp: a.postalCode || "",
     agence: formatAgence(a),
-    photos: (a.photos || []).slice(0, 3).map((p: any) => bestPhotoUrl([p])).filter(Boolean),
+    photos: (a.photos || []).slice(0, 10).map((p: any) => bestPhotoUrl([p])).filter(Boolean),
     lat, lng,
     terrain: toNumber(a.landSurfaceArea) || 0,
     posType: a.blurInfo?.type || "unknown",
@@ -245,7 +245,7 @@ function mapPapJsonLd(item: any, nomVille: string): any | null {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const ville = searchParams.get("ville") || "";
-  const size = Math.min(parseInt(searchParams.get("size") || "60"), 300);
+  const size = Math.min(parseInt(searchParams.get("size") || "300"), 500);
   const debug = searchParams.get("debug") === "1";
   const scraperKey = process.env.SCRAPERAPI_KEY || "";
 
@@ -264,8 +264,13 @@ export async function GET(req: NextRequest) {
       fetchBieniciPage(zone.zoneId, 0,   "publicationDate", "desc"),
       fetchBieniciPage(zone.zoneId, 60,  "publicationDate", "desc"),
       fetchBieniciPage(zone.zoneId, 120, "publicationDate", "desc"),
+      fetchBieniciPage(zone.zoneId, 180, "publicationDate", "desc"),
+      fetchBieniciPage(zone.zoneId, 240, "publicationDate", "desc"),
+      fetchBieniciPage(zone.zoneId, 300, "publicationDate", "desc"),
       fetchBieniciPage(zone.zoneId, 0,   "price",           "desc"),
+      fetchBieniciPage(zone.zoneId, 60,  "price",           "desc"),
       fetchBieniciPage(zone.zoneId, 0,   "price",           "asc"),
+      fetchBieniciPage(zone.zoneId, 60,  "price",           "asc"),
     ]);
 
     const allRaw: any[] = [];
