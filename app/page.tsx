@@ -215,6 +215,8 @@ export default function App() {
   const [cardPhotoIdx, setCardPhotoIdx] = useState<Record<string,number>>({});
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchResult, setMatchResult] = useState<any>(null);
+  const [fullDossierLoading, setFullDossierLoading] = useState(false);
+  const [fullDossierResult, setFullDossierResult] = useState<any>(null);
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
@@ -512,7 +514,7 @@ export default function App() {
 
   const handleMatchAnnonce = useCallback(async (annonce: any) => {
     if (!annonce?.lat || !annonce?.lng) return;
-    setMatchLoading(true); setMatchResult(null);
+    setMatchLoading(true); setMatchResult(null); setFullDossierResult(null); setFullDossierLoading(false);
     try {
       // Fetch photos client-side (browser can download them, server cannot due to referer blocking)
       const photos: string[] = [];
@@ -2658,7 +2660,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                         const prixM2 = a.prix && a.surface && a.surface > 0 ? Math.round(a.prix / a.surface) : null;
                         const isSel = selAnnonce?.id === a.id;
                         return (
-                        <div key={a.id} onClick={()=>{setSelAnnonce(isSel?null:a);setMatchResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:C.card,border:`1px solid ${isSel?C.accent:C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s,border-color 0.15s",cursor:"pointer",boxShadow:isSel?`0 0 0 2px ${C.accent}30`:undefined}} onMouseOver={e=>{if(!isSel)e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{if(!isSel)e.currentTarget.style.boxShadow="none";}}>
+                        <div key={a.id} onClick={()=>{setSelAnnonce(isSel?null:a);setMatchResult(null);setFullDossierResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:C.card,border:`1px solid ${isSel?C.accent:C.border}`,borderRadius:12,overflow:"hidden",transition:"box-shadow 0.15s,border-color 0.15s",cursor:"pointer",boxShadow:isSel?`0 0 0 2px ${C.accent}30`:undefined}} onMouseOver={e=>{if(!isSel)e.currentTarget.style.boxShadow=`0 4px 20px ${C.shadow}`;}} onMouseOut={e=>{if(!isSel)e.currentTarget.style.boxShadow="none";}}>
                           {a.photos?.length>0?(
                             <div style={{height:150,background:`url(${a.photos[cardPhotoIdx[a.id]||0]}) center/cover no-repeat`,flexShrink:0,position:"relative"}}>
                               {a.isNew&&<div style={{position:"absolute",top:8,left:8,background:C.amber,color:"#000",fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",letterSpacing:"0.06em"}}>NEUF</div>}
@@ -2741,7 +2743,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                     <div style={{width:320,flexShrink:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:20,position:"sticky",top:16,maxHeight:"calc(100vh - 40px)",overflowY:"auto"}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
                         <div style={{fontSize:13,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Bien sélectionné</div>
-                        <button onClick={()=>{setSelAnnonce(null);setMatchResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1}}>×</button>
+                        <button onClick={()=>{setSelAnnonce(null);setMatchResult(null);setFullDossierResult(null);setAnnoncePhotoIdx(0);setAnnonceShowDesc(false);}} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1}}>×</button>
                       </div>
                       {/* Carousel photos */}
                       {selAnnonce.photos?.length>0&&(
@@ -2852,49 +2854,68 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                           ):(
                             <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Propriétaire non identifié</div>
                           )}
-                          {/* Ventes */}
-                          {matchResult.pappers_immo?.ventes?.length>0&&(
-                            <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
-                              <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Historique ventes</div>
-                              {matchResult.pappers_immo.ventes.map((v:any,i:number)=>(
-                                <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.text,padding:"3px 0",borderBottom:i<matchResult.pappers_immo.ventes.length-1?`1px solid ${C.border}`:"none"}}>
-                                  <span style={{color:C.muted}}>{v.date}</span>
-                                  <span style={{fontWeight:600}}>{v.prix?.toLocaleString("fr-FR")} €</span>
-                                </div>
-                              ))}
-                            </div>
+                          {/* Dossier complet Pappers Immo (10 crédits, à la demande) */}
+                          {matchResult.lat&&matchResult.lng&&!fullDossierResult&&(
+                            <button
+                              disabled={fullDossierLoading}
+                              onClick={async()=>{
+                                setFullDossierLoading(true);
+                                try {
+                                  const r = await fetch(`/api/pappers-immo-full?lat=${matchResult.lat}&lng=${matchResult.lng}`);
+                                  const d = await r.json();
+                                  setFullDossierResult(d.error?null:d);
+                                } catch {}
+                                setFullDossierLoading(false);
+                              }}
+                              style={{width:"100%",marginBottom:8,background:"none",border:`1px solid ${C.border}`,color:fullDossierLoading?C.muted:C.blue,borderRadius:8,padding:"8px 0",fontSize:12,fontWeight:600,cursor:fullDossierLoading?"not-allowed":"pointer",letterSpacing:"-0.01em"}}
+                            >
+                              {fullDossierLoading?"Chargement du dossier...":"Voir le dossier complet"}
+                            </button>
                           )}
-                          {/* Bâtiment + DPE */}
-                          {(matchResult.pappers_immo?.batiments?.length>0||matchResult.pappers_immo?.dpe?.length>0)&&(
-                            <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
-                              <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Bâtiment</div>
-                              {matchResult.pappers_immo.batiments?.[0]&&(
-                                <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>
-                                  {[
-                                    matchResult.pappers_immo.batiments[0].surface&&`${matchResult.pappers_immo.batiments[0].surface} m²`,
-                                    matchResult.pappers_immo.batiments[0].annee_construction&&`Construit en ${matchResult.pappers_immo.batiments[0].annee_construction}`,
-                                    matchResult.pappers_immo.batiments[0].usage,
-                                  ].filter(Boolean).join(" · ")}
+                          {fullDossierResult&&(
+                            <div style={{marginBottom:8}}>
+                              {fullDossierResult.ventes?.length>0&&(
+                                <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                                  <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Historique ventes</div>
+                                  {fullDossierResult.ventes.map((v:any,i:number)=>(
+                                    <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.text,padding:"3px 0",borderBottom:i<fullDossierResult.ventes.length-1?`1px solid ${C.border}`:"none"}}>
+                                      <span style={{color:C.muted}}>{v.date}</span>
+                                      <span style={{fontWeight:600}}>{v.prix?.toLocaleString("fr-FR")} €</span>
+                                    </div>
+                                  ))}
                                 </div>
                               )}
-                              {matchResult.pappers_immo.dpe?.[0]&&(
-                                <div style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
-                                  <span style={{fontSize:11,color:C.muted}}>DPE</span>
-                                  <span style={{fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:4,background:matchResult.pappers_immo.dpe[0].classe_bilan==="A"||matchResult.pappers_immo.dpe[0].classe_bilan==="B"?"#dcfce7":matchResult.pappers_immo.dpe[0].classe_bilan==="F"||matchResult.pappers_immo.dpe[0].classe_bilan==="G"?"#fee2e2":"#fef9c3",color:"#374151"}}>
-                                    {matchResult.pappers_immo.dpe[0].classe_bilan}
-                                  </span>
-                                  {matchResult.pappers_immo.dpe[0].classe_ges&&<span style={{fontSize:11,color:C.muted}}>GES {matchResult.pappers_immo.dpe[0].classe_ges}</span>}
+                              {(fullDossierResult.batiments?.length>0||fullDossierResult.dpe?.length>0)&&(
+                                <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                                  <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Bâtiment</div>
+                                  {fullDossierResult.batiments?.[0]&&(
+                                    <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>
+                                      {[
+                                        fullDossierResult.batiments[0].surface&&`${fullDossierResult.batiments[0].surface} m²`,
+                                        fullDossierResult.batiments[0].annee_construction&&`Construit en ${fullDossierResult.batiments[0].annee_construction}`,
+                                        fullDossierResult.batiments[0].usage,
+                                      ].filter(Boolean).join(" · ")}
+                                    </div>
+                                  )}
+                                  {fullDossierResult.dpe?.[0]&&(
+                                    <div style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
+                                      <span style={{fontSize:11,color:C.muted}}>DPE</span>
+                                      <span style={{fontSize:12,fontWeight:700,padding:"1px 7px",borderRadius:4,background:fullDossierResult.dpe[0].classe_bilan==="A"||fullDossierResult.dpe[0].classe_bilan==="B"?"#dcfce7":fullDossierResult.dpe[0].classe_bilan==="F"||fullDossierResult.dpe[0].classe_bilan==="G"?"#fee2e2":"#fef9c3",color:"#374151"}}>
+                                        {fullDossierResult.dpe[0].classe_bilan}
+                                      </span>
+                                      {fullDossierResult.dpe[0].classe_ges&&<span style={{fontSize:11,color:C.muted}}>GES {fullDossierResult.dpe[0].classe_ges}</span>}
+                                    </div>
+                                  )}
                                 </div>
                               )}
-                            </div>
-                          )}
-                          {/* Permis */}
-                          {matchResult.pappers_immo?.permis?.length>0&&(
-                            <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
-                              <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Permis de construire</div>
-                              {matchResult.pappers_immo.permis.map((pm:any,i:number)=>(
-                                <div key={i} style={{fontSize:11,color:C.text,padding:"2px 0"}}>{pm.statut}{pm.date?` — ${pm.date}`:""}{pm.nature?` (${pm.nature})`:""}</div>
-                              ))}
+                              {fullDossierResult.permis?.length>0&&(
+                                <div style={{border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
+                                  <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Permis de construire</div>
+                                  {fullDossierResult.permis.map((pm:any,i:number)=>(
+                                    <div key={i} style={{fontSize:11,color:C.text,padding:"2px 0"}}>{pm.statut}{pm.date?` — ${pm.date}`:""}{pm.nature?` (${pm.nature})`:""}</div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                           {matchResult.surface_warning&&(
@@ -2928,7 +2949,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               Voir parcelle {matchResult.parcel.section}{matchResult.parcel.numero} sur Pappers Immobilier →
                             </a>
                           )}
-                          <button onClick={()=>setMatchResult(null)} style={{marginTop:8,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>Réessayer</button>
+                          <button onClick={()=>{setMatchResult(null);setFullDossierResult(null);}} style={{marginTop:8,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>Réessayer</button>
                         </div>
                       )}
                       {/* Match result — bien non identifié : candidats DVF à comparer */}
@@ -2988,7 +3009,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               </div>
                             );
                           })}
-                          <button onClick={()=>setMatchResult(null)} style={{marginTop:4,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>Réessayer</button>
+                          <button onClick={()=>{setMatchResult(null);setFullDossierResult(null);}} style={{marginTop:4,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>Réessayer</button>
                         </div>
                       )}
                       {matchResult?.error&&(
