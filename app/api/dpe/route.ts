@@ -56,25 +56,17 @@ export async function GET(req: NextRequest) {
         const ageJours = Math.floor((now.getTime() - dateReception.getTime()) / (1000 * 60 * 60 * 24));
         const classe = d.etiquette_dpe || "D";
 
-        // RECENCE = signal principal : un DPE récent = vente imminente (DPE obligatoire avant vente)
-        // < 30j : quasi certain en vente prochainement
-        // < 90j : très probable
-        // < 180j : probable (6 mois = fenêtre de mise en vente)
-        // > 1 an : signal faible, sauf si F/G (obligation légale)
-        const sRecence = ageJours < 30 ? 60 : ageJours < 90 ? 52 : ageJours < 180 ? 42 : ageJours < 365 ? 18 : 5;
+        // RECENCE = seul signal : un DPE récent = propriétaire qui prépare une vente
+        // La classe (A/B/C/D/E/F/G) ne prédit pas la propension à vendre
+        const score = ageJours < 30 ? 90 : ageJours < 90 ? 75 : ageJours < 180 ? 58 : ageJours < 365 ? 35 : 15;
 
-        // CLASSE = signal secondaire : F/G = obligation de rénover ou vendre (loi Climat 2025-2028)
-        const sClasse = classe === "G" ? 30 : classe === "F" ? 25 : classe === "E" ? 10 : 5;
-
-        const score = Math.min(100, sRecence + sClasse);
-
-        // Exclure les DPE trop anciens sans obligation légale (> 1 an et classe A/B/C/D)
-        if (ageJours > 365 && !["F","G"].includes(classe)) return null;
+        // Exclure les DPE > 1 an (signal trop faible)
+        if (ageJours > 365) return null;
 
         const adresse = d.adresse_ban || "Adresse inconnue";
         const rawId = (adresse + d.date_reception_dpe).replace(/[^a-zA-Z0-9]/g, "").slice(0, 24);
 
-        const signalLabel = ageJours < 30 ? "Vente imminente" : ageJours < 90 ? "Vente très probable" : ageJours < 180 ? "Vente probable" : (classe === "G" || classe === "F") ? "Obligation légale" : "";
+        const signalLabel = ageJours < 30 ? "Vente imminente" : ageJours < 90 ? "Vente très probable" : ageJours < 180 ? "Vente probable" : ageJours < 365 ? "Vente possible" : "";
         const ageLabel = ageJours < 7 ? `il y a ${ageJours}j` : ageJours < 30 ? `il y a ${ageJours}j` : ageJours < 60 ? `il y a ${Math.round(ageJours/7)} sem.` : ageJours < 365 ? `il y a ${Math.round(ageJours/30)} mois` : `${dateReception.toLocaleDateString("fr-FR")}`;
 
         return {

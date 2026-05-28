@@ -82,15 +82,25 @@ export default function MapComponent({ prospects, onSelect, center, dark = true,
     markers.current = [];
     prospects.forEach(p => {
       if (!p.lat || !p.lng) return;
-      const isDpeFG = p.source === "DPE" && (p.classe_dpe === "F" || p.classe_dpe === "G");
-      const col = isDpeFG ? "#F97316" : p.score >= 85 ? "#10B981" : p.score >= 70 ? "#F59E0B" : p.score >= 50 ? "#EF4444" : "#6B7280";
-      const sz = isDpeFG ? 38 : p.score >= 85 ? 36 : p.score >= 70 ? 32 : 28;
-      const src = p.source === "DPE" ? ("DPE" + (p.classe_dpe ? " " + p.classe_dpe : "")) : "DVF";
+      const isDpe = p.source === "DPE";
+      let col: string;
+      let sz: number;
+      let label: string | number;
+      if (isDpe) {
+        const cls = p.classe_dpe || "";
+        col = cls === "G" ? "#EF4444" : cls === "F" ? "#F97316" : cls === "E" ? "#F59E0B" : cls === "D" ? "#6B7280" : "#10B981";
+        sz = cls === "G" ? 38 : cls === "F" ? 36 : cls === "E" ? 32 : 28;
+        label = cls || p.score;
+      } else {
+        col = p.score >= 85 ? "#10B981" : p.score >= 70 ? "#F59E0B" : p.score >= 50 ? "#EF4444" : "#6B7280";
+        sz = p.score >= 85 ? 36 : p.score >= 70 ? 32 : 28;
+        label = p.score;
+      }
+      const src = isDpe ? ("DPE" + (p.classe_dpe ? " " + p.classe_dpe : "")) : "DVF";
       const own = p.proprietaire_nom ? `<div style="font-size:10px;color:#C4A35A;margin-top:3px;font-weight:600;">${p.proprietaire_nom}</div>` : "";
-      const label = isDpeFG ? (p.classe_dpe || p.score) : p.score;
       const icon = L.divIcon({
         className: "",
-        html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${col};border:2px solid rgba(255,255,255,0.35);display:flex;align-items:center;justify-content:center;color:white;font-size:${isDpeFG?12:11}px;font-weight:700;box-shadow:0 2px 12px ${col}60;cursor:pointer;font-family:-apple-system,sans-serif;transition:transform 0.15s;" onmouseover="this.style.transform='scale(1.25)'" onmouseout="this.style.transform='scale(1)'">${label}</div>`,
+        html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${col};border:2px solid rgba(255,255,255,0.35);display:flex;align-items:center;justify-content:center;color:white;font-size:${isDpe?12:11}px;font-weight:700;box-shadow:0 2px 12px ${col}60;cursor:pointer;font-family:-apple-system,sans-serif;transition:transform 0.15s;" onmouseover="this.style.transform='scale(1.25)'" onmouseout="this.style.transform='scale(1)'">${label}</div>`,
         iconSize: [sz, sz], iconAnchor: [sz/2, sz/2],
       });
       const marker = L.marker([p.lat, p.lng], { icon }).addTo(map);
@@ -106,12 +116,25 @@ export default function MapComponent({ prospects, onSelect, center, dark = true,
   }, [ready, prospects, dark]);
 
   const googleMaps3DUrl = `https://www.google.com/maps/@${center[0]},${center[1]},200m/data=!3m1!1e3`;
+  const hasDpe = prospects.some(p => p.source === "DPE");
 
   return (
     <>
       <style>{`.leaflet-container{font-family:-apple-system,sans-serif;}.mandatly-tooltip{background:rgba(10,16,28,0.96)!important;border:1px solid rgba(196,163,90,0.3)!important;border-radius:8px!important;box-shadow:0 4px 20px rgba(0,0,0,0.5)!important;padding:8px 12px!important;color:#fff;}.mandatly-tooltip::before,.leaflet-tooltip-top.mandatly-tooltip::before{display:none!important;}`}</style>
       <div style={{ position: "relative", width: "100%", height: "100%" }}>
         <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+        {/* Légende DPE */}
+        {hasDpe && (
+          <div style={{ position: "absolute", bottom: 40, left: 12, zIndex: 1000, background: "rgba(10,16,28,0.88)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "8px 12px", backdropFilter: "blur(8px)" }}>
+            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 6 }}>DPE</div>
+            {([["G","#EF4444"],["F","#F97316"],["E","#F59E0B"],["D","#6B7280"],["C/B/A","#10B981"]] as [string,string][]).map(([cls, col]) => (
+              <div key={cls} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: col, flexShrink: 0 }} />
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.75)", fontWeight: 600 }}>{cls}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {/* Contrôles carte */}
         <div style={{ position: "absolute", top: 12, left: 12, zIndex: 1000, display: "flex", gap: 6 }}>
           {/* Toggle Plan / Satellite */}

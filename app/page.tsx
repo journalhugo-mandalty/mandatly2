@@ -243,6 +243,7 @@ export default function App() {
   const [radarLetterLoading, setRadarLetterLoading] = useState(false);
   const [radarLetterTemplate, setRadarLetterTemplate] = useState("prospection");
   const [radarView, setRadarView] = useState<"cards"|"map">("cards");
+  const [dpeMapLoading, setDpeMapLoading] = useState(false);
   // Gamification
   const [courriersSent, setCourriersSent] = useState(()=>{
     if(typeof window==="undefined") return 0;
@@ -573,18 +574,9 @@ export default function App() {
         if(dpeR.status==="fulfilled"&&!dpeR.value.error) all.push(...(dpeR.value.prospects||[]));
       } catch{}
     }
-    // DPE F/G = contrainte loi Climat → signal de vente fort, remonter en tête
-    const effectiveScore = (p: Prospect) => {
-      let s = p.score;
-      if (p.source === "DPE") {
-        if (p.classe_dpe === "G") s += 25;
-        else if (p.classe_dpe === "F") s += 18;
-      }
-      return s;
-    };
     const sorted = all
       .filter(p=>!radarDone.has(String(p.id)))
-      .sort((a,b)=>effectiveScore(b)-effectiveScore(a))
+      .sort((a,b)=>b.score-a.score)
       .slice(0,60);
     setRadarProspects(sorted);
     setRadarLoading(false);
@@ -613,6 +605,25 @@ export default function App() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radarVilles, radarDone, radarLetterTemplate, agent]);
+
+  const loadDpeOnly = useCallback(async () => {
+    if (!radarVilles.length) return;
+    setDpeMapLoading(true);
+    const all: Prospect[] = [];
+    for (const v of radarVilles) {
+      try {
+        const dpeR = await fetch(`/api/dpe?commune=${encodeURIComponent(v)}`).then(r => r.json());
+        if (!dpeR.error) all.push(...(dpeR.prospects || []));
+      } catch {}
+    }
+    const sorted = all
+      .filter(p => p.lat && p.lng)
+      .sort((a: any, b: any) => (a.age_jours ?? 999) - (b.age_jours ?? 999));
+    setRadarProspects(sorted);
+    setRadarView("map");
+    setDpeMapLoading(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [radarVilles]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const generateRadarLetterFn = useCallback(async (p: Prospect, template: string) => {
@@ -765,7 +776,7 @@ export default function App() {
   );
 
   // MAIN APP
-  const NAVS = [{id:"prospects",label:"Prospection"},{id:"radar",label:"Campagnes"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
+  const NAVS = [{id:"prospects",label:"Prospection"},{id:"radar",label:"Radar"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:BODY,color:C.text,overflow:"hidden"}}>
@@ -866,10 +877,10 @@ export default function App() {
               <div>
                 <div style={{fontSize:11,color:C.gold,fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:6}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</div>
                 <h1 style={{fontFamily:DISPLAY,fontSize:36,fontWeight:400,color:C.text,letterSpacing:"-0.01em",lineHeight:1,fontStyle:"italic"}}>Bonjour, {agent.prenom}</h1>
-                <div style={{fontSize:12,color:C.muted,marginTop:6}}>Campagnes multi-villes — revue fiche par fiche, génération courrier individuelle</div>
+                <div style={{fontSize:12,color:C.muted,marginTop:6}}>Radar multi-villes — revue fiche par fiche, génération courrier individuelle</div>
               </div>
               <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                {radarProspects.length>0&&(
+                {(radarProspects.length>0||dpeMapLoading)&&(
                   <div style={{display:"flex",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:3,gap:2}}>
                     {(["cards","map"] as const).map(v=>(
                       <button key={v} onClick={()=>setRadarView(v)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:radarView===v?C.accent:"transparent",color:radarView===v?(dark?"#080808":"#fff"):C.muted,fontSize:11,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
@@ -926,6 +937,9 @@ export default function App() {
                   <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:8,padding:"10px",fontSize:13,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
                     {radarLoading?"Analyse en cours...":"Lancer la campagne"}
                   </button>
+                  <button disabled={dpeMapLoading||radarVilles.length===0} onClick={loadDpeOnly} style={{width:"100%",background:"transparent",color:dpeMapLoading||radarVilles.length===0?C.muted:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px",fontSize:12,fontWeight:600,cursor:dpeMapLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s",marginTop:6}}>
+                    {dpeMapLoading?"Chargement DPE...":"Carte DPE (gratuit)"}
+                  </button>
                 </div>
                 {/* Progress */}
                 {radarTotal>0&&(
@@ -973,7 +987,7 @@ export default function App() {
                 )}
                 {radarView==="cards"&&!radarProspects.length&&!radarLoading&&(
                   <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
-                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Campagnes multi-villes</div>
+                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Radar multi-villes</div>
                     <div style={{fontSize:13,color:C.muted,marginBottom:6,lineHeight:1.6}}>Ajoutez plusieurs villes, lancez la campagne — vous passez ensuite chaque prospect en revue et générez les courriers un par un.</div>
                     <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Pour explorer une ville en détail avec la carte, utilisez <button onClick={()=>setNav("prospects")} style={{background:"none",border:"none",color:C.gold,fontSize:12,cursor:"pointer",fontWeight:600,padding:0}}>Prospection →</button></div>
                     <div style={{display:"flex",justifyContent:"center",gap:8,flexWrap:"wrap",marginBottom:24}}>
@@ -1494,9 +1508,9 @@ export default function App() {
                     }
                   </span>
                   {prospSecteur&&!radarVilles.includes(prospSecteur)&&(
-                    <button onClick={()=>{setRadarVilles(v=>[...v,prospSecteur]);}} title="Ajouter à la liste Campagnes pour suivi multi-villes"
+                    <button onClick={()=>{setRadarVilles(v=>[...v,prospSecteur]);}} title="Ajouter au Radar pour suivi multi-villes"
                       style={{fontSize:10,color:C.muted,background:"transparent",border:`1px solid ${C.border}`,borderRadius:5,padding:"2px 7px",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-                      + Campagnes
+                      + Radar
                     </button>
                   )}
                   <button onClick={()=>setNav("courriers")} style={{fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",fontWeight:500,padding:0,whiteSpace:"nowrap",flexShrink:0}}>Suivi →</button>
