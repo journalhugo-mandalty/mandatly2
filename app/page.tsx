@@ -2824,6 +2824,19 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                             {matchResult.method==="dvf_vision"&&matchResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
                             {matchResult.method==="dvf_surface"&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>Surface DVF — à confirmer</span>}
                           </div>
+                          {/* Vue aérienne inline — confirmer visuellement que c'est le bon bien */}
+                          {matchResult.lat&&matchResult.lng&&matchResult.method!=="dvf"&&(
+                            <div style={{marginBottom:10,borderRadius:9,overflow:"hidden",border:`1px solid ${C.border}`,position:"relative"}}>
+                              <img
+                                src={`https://data.geopf.fr/wms-r/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&FORMAT=image/jpeg&WIDTH=320&HEIGHT=180&SRS=EPSG:4326&BBOX=${matchResult.lng-0.0014},${matchResult.lat-0.0008},${matchResult.lng+0.0014},${matchResult.lat+0.0008}`}
+                                alt="Vue aérienne"
+                                style={{width:"100%",height:160,objectFit:"cover",display:"block"}}
+                              />
+                              <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.45)",padding:"4px 8px",fontSize:10,color:"#fff",fontWeight:600}}>
+                                Vue aérienne IGN — vérifiez que c'est bien ce bien
+                              </div>
+                            </div>
+                          )}
                           {matchResult.parcel&&(
                             <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
                               <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>Parcelle {matchResult.parcel.section}{matchResult.parcel.numero}</div>
@@ -2843,6 +2856,11 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                                   {p.siren&&<a href={`https://www.pappers.fr/entreprise/${p.siren}`} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>SIREN {p.siren} →</a>}
                                 </div>
                               ))}
+                              {matchResult.pappers_immo.adresse&&(
+                                <div style={{fontSize:10,color:C.muted,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.green}25`}}>
+                                  Fichiers Fonciers : {matchResult.pappers_immo.adresse}
+                                </div>
+                              )}
                             </div>
                           ):matchResult.owner?.nom?(
                             <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:9,padding:"10px 12px",marginBottom:8}}>
