@@ -245,6 +245,11 @@ export default function App() {
   const [radarView, setRadarView] = useState<"cards"|"map">("cards");
   const [dpeMapLoading, setDpeMapLoading] = useState(false);
   const [radarSelected, setRadarSelected] = useState<any>(null);
+  const [radarLayers, setRadarLayers] = useState({ parcelles: true, ventes: true, proprietaires: false, dpe: true });
+  const [radarParcelPanel, setRadarParcelPanel] = useState<{
+    properties: any; centroid: [number,number]; matching: any[];
+    address: string|null; owner: any|null; ownerLoading: boolean;
+  }|null>(null);
   const [radarBasket, setRadarBasket] = useState<Record<string,{prospect:any;liked:boolean;dateSent?:string}>>(() => {
     if(typeof window==="undefined") return {};
     try{return JSON.parse(localStorage.getItem("m_radar_basket")||"{}");}catch{return {};}
@@ -858,10 +863,7 @@ export default function App() {
           const isLiked = (id:string)=>!!radarBasket[id]?.liked;
           const toggleLike = (p:any)=>{
             const sid=String(p.id);
-            setRadarBasket(b=>{
-              const ex=b[sid];
-              return ex?{...b,[sid]:{...ex,liked:!ex.liked}}:{...b,[sid]:{prospect:p,liked:true}};
-            });
+            setRadarBasket(b=>{const ex=b[sid];return ex?{...b,[sid]:{...ex,liked:!ex.liked}}:{...b,[sid]:{prospect:p,liked:true}};});
           };
           const sendLetter = (p:any,letter:string)=>{
             if(!p||!letter) return;
@@ -872,54 +874,106 @@ export default function App() {
             setRadarBasket(b=>({...b,[sid]:{...(b[sid]||{prospect:p,liked:false}),dateSent:today,liked:b[sid]?.liked||false}}));
             navigator.clipboard?.writeText(letter).catch(()=>{});
           };
+          const handleParcelClick = async ({properties,centroid,matchingProspects}:any)=>{
+            setRadarSelected(null);
+            setRadarParcelPanel({properties,centroid,matching:matchingProspects,address:null,owner:null,ownerLoading:true});
+            const [lat,lng]=centroid;
+            try{
+              const ban=await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`).then(r=>r.json());
+              const address=ban.features?.[0]?.properties?.label||null;
+              setRadarParcelPanel(prev=>prev?{...prev,address}:prev);
+            }catch{}
+            try{
+              const own=await fetch(`/api/proprietaire?lat=${lat}&lng=${lng}&adresse=`).then(r=>r.json());
+              setRadarParcelPanel(prev=>prev?{...prev,owner:own,ownerLoading:false}:prev);
+            }catch{setRadarParcelPanel(prev=>prev?{...prev,ownerLoading:false}:prev);}
+          };
           const firstWithCoords=radarProspects.find(p=>p.lat&&p.lng);
           const radarMapCenter:[number,number]=firstWithCoords?[firstWithCoords.lat as number,firstWithCoords.lng as number]:[44.837,-0.579];
+
+          // Layer config
+          const LAYER_CFG=[
+            {key:"parcelles",label:"Parcelles cadastrales",color:"#94A3B8",desc:"Polygones IGN officiels"},
+            {key:"ventes",    label:"Ventes DVF",          color:"#F97316",desc:"Transactions immobilières"},
+            {key:"proprietaires",label:"Propriétaires",   color:"#6366F1",desc:"Propriétaires identifiés"},
+            {key:"dpe",       label:"DPE récents",         color:"#10B981",desc:"Signaux de vente"},
+          ] as const;
+
+          const EyeOpen = ()=>(
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          );
+          const EyeOff = ()=>(
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          );
+
+          const rightOpen = !!(radarSelected || radarParcelPanel);
+
           return (
           <div style={{flex:1,display:"flex",overflow:"hidden"}}>
-            {/* LEFT: config + panier */}
-            <div style={{width:236,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card}}>
-              <div style={{padding:"16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
-                <div style={{fontSize:10,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:12}}>Radar</div>
-                <div style={{display:"flex",gap:5,marginBottom:8}}>
+
+            {/* LEFT: calques + config + panier */}
+            <div style={{width:220,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card}}>
+              {/* Calques */}
+              <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:10}}>Calques</div>
+                {LAYER_CFG.map(l=>{
+                  const on=radarLayers[l.key];
+                  return(
+                  <div key={l.key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}
+                    onClick={()=>setRadarLayers(prev=>({...prev,[l.key]:!prev[l.key]}))}>
+                    <div style={{width:10,height:10,borderRadius:2,background:l.color,opacity:on?1:0.25,flexShrink:0,transition:"opacity 0.15s"}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:11,fontWeight:500,color:on?C.text:C.muted,transition:"color 0.15s"}}>{l.label}</div>
+                    </div>
+                    <div style={{color:on?C.text:C.border,flexShrink:0,transition:"color 0.15s"}}>
+                      {on?<EyeOpen/>:<EyeOff/>}
+                    </div>
+                  </div>
+                );})}
+              </div>
+
+              {/* Secteur */}
+              <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:8}}>Secteur</div>
+                <div style={{display:"flex",gap:4,marginBottom:7}}>
                   <input value={radarVilleInput} onChange={e=>setRadarVilleInput(e.target.value)}
                     onKeyDown={e=>{if(e.key==="Enter"&&radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}}
-                    placeholder="Ex: Bordeaux" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:11}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  <button onClick={()=>{if(radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:6,padding:"6px 9px",fontSize:12,fontWeight:600,cursor:"pointer"}}>+</button>
+                    placeholder="Ex: Bordeaux" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.text,padding:"5px 7px",fontSize:11}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <button onClick={()=>{if(radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:5,padding:"5px 8px",fontSize:12,fontWeight:600,cursor:"pointer"}}>+</button>
                 </div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+                <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:8}}>
                   {radarVilles.map(v=>(
-                    <div key={v} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:5,padding:"2px 7px",fontSize:10,color:C.text,display:"flex",alignItems:"center",gap:3}}>
+                    <div key={v} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:4,padding:"2px 6px",fontSize:10,color:C.text,display:"flex",alignItems:"center",gap:3}}>
                       {v}<button onClick={()=>setRadarVilles(vs=>vs.filter(x=>x!==v))} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",padding:0,lineHeight:1}}>×</button>
                     </div>
                   ))}
                   {radarVilles.length===0&&<div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Aucune ville</div>}
                 </div>
-                <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:7,padding:"9px",fontSize:12,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s",marginBottom:6}}>
+                <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:6,padding:"8px",fontSize:11,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s",marginBottom:5}}>
                   {radarLoading?"Analyse…":"Lancer le radar"}
                 </button>
-                <button disabled={dpeMapLoading||radarVilles.length===0} onClick={loadDpeOnly} style={{width:"100%",background:"transparent",color:dpeMapLoading||radarVilles.length===0?C.muted:C.text,border:`1px solid ${C.border}`,borderRadius:7,padding:"7px",fontSize:11,fontWeight:600,cursor:dpeMapLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
+                <button disabled={dpeMapLoading||radarVilles.length===0} onClick={loadDpeOnly} style={{width:"100%",background:"transparent",color:dpeMapLoading||radarVilles.length===0?C.muted:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px",fontSize:10,fontWeight:600,cursor:dpeMapLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
                   {dpeMapLoading?"Chargement…":"Carte DPE (gratuit)"}
                 </button>
-                {radarProspects.length>0&&<div style={{fontSize:10,color:C.muted,marginTop:8,textAlign:"center"}}>{radarProspects.length} biens sur la carte</div>}
+                {radarProspects.length>0&&<div style={{fontSize:10,color:C.muted,marginTop:6,textAlign:"center"}}>{radarProspects.length} biens chargés</div>}
               </div>
+
               {/* Panier */}
-              <div style={{flex:1,overflowY:"auto",padding:"12px"}}>
+              <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:8}}>Panier{basketItems.length>0?` · ${basketItems.length}`:""}</div>
                 {basketItems.length>0?(
-                  <>
-                    <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:10}}>Panier · {basketItems.length}</div>
-                    {basketItems.map((item:any)=>(
-                      <div key={String(item.prospect.id)} onClick={()=>{setRadarSelected(item.prospect);generateRadarLetterFn(item.prospect,radarLetterTemplate);}} style={{padding:"8px 10px",borderRadius:7,border:`1px solid ${item.liked?C.gold+"50":C.border}`,background:item.liked?C.gold+"08":C.surface,marginBottom:6,cursor:"pointer",transition:"all 0.12s"}} onMouseOver={e=>e.currentTarget.style.borderColor=C.text} onMouseOut={e=>e.currentTarget.style.borderColor=item.liked?C.gold+"50":C.border}>
-                        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}>
-                          <span style={{fontSize:12,color:item.liked?C.gold:C.muted,flexShrink:0}}>{item.liked?"♥":"○"}</span>
-                          <div style={{fontSize:11,fontWeight:600,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.prospect.adresse}</div>
-                        </div>
-                        <div style={{fontSize:10,color:C.muted}}>{item.prospect.ville}</div>
-                        {item.dateSent&&<div style={{fontSize:9,color:C.green,marginTop:3,fontWeight:600}}>Envoyé le {item.dateSent}</div>}
+                  basketItems.map((item:any)=>(
+                    <div key={String(item.prospect.id)} onClick={()=>{setRadarParcelPanel(null);setRadarSelected(item.prospect);generateRadarLetterFn(item.prospect,radarLetterTemplate);}} style={{padding:"7px 8px",borderRadius:6,border:`1px solid ${item.liked?C.gold+"50":C.border}`,background:item.liked?C.gold+"08":C.surface,marginBottom:5,cursor:"pointer",transition:"all 0.12s"}} onMouseOver={e=>e.currentTarget.style.borderColor=C.text} onMouseOut={e=>e.currentTarget.style.borderColor=item.liked?C.gold+"50":C.border}>
+                      <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:2}}>
+                        <span style={{fontSize:11,color:item.liked?C.gold:C.muted,flexShrink:0}}>{item.liked?"♥":"○"}</span>
+                        <div style={{fontSize:10,fontWeight:600,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.prospect.adresse}</div>
                       </div>
-                    ))}
-                  </>
+                      <div style={{fontSize:9,color:C.muted}}>{item.prospect.ville}</div>
+                      {item.dateSent&&<div style={{fontSize:9,color:C.green,marginTop:2,fontWeight:600}}>Envoyé le {item.dateSent}</div>}
+                    </div>
+                  ))
                 ):(
-                  <div style={{fontSize:10,color:C.muted,fontStyle:"italic",textAlign:"center",paddingTop:20,lineHeight:1.6}}>Aimez ♡ ou envoyez un courrier pour alimenter le panier</div>
+                  <div style={{fontSize:10,color:C.muted,fontStyle:"italic",textAlign:"center",paddingTop:12,lineHeight:1.6}}>♡ ou envoi = panier</div>
                 )}
               </div>
             </div>
@@ -932,81 +986,187 @@ export default function App() {
                   <div style={{fontSize:12,color:"#fff",fontWeight:600}}>{radarLoading?"Analyse en cours…":"Chargement DPE…"}</div>
                 </div>
               )}
-              {radarProspects.length>0?(
+              {radarProspects.length>0||radarLayers.parcelles?(
                 <MapComponent
                   prospects={radarProspects.filter(p=>p.lat&&p.lng) as any}
                   center={radarMapCenter}
                   dark={dark}
                   satellite={true}
-                  onSelect={(p:any)=>{setRadarSelected(p);generateRadarLetterFn(p,radarLetterTemplate);}}
+                  layers={radarLayers}
+                  onSelect={(p:any)=>{setRadarParcelPanel(null);setRadarSelected(p);generateRadarLetterFn(p,radarLetterTemplate);}}
+                  onParcelClick={handleParcelClick}
                 />
               ):(
                 !radarLoading&&!dpeMapLoading&&(
                   <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
                     <div style={{fontFamily:DISPLAY,fontSize:24,fontWeight:400,color:C.text,fontStyle:"italic",textAlign:"center"}}>Radar multi-villes</div>
                     <div style={{fontSize:12,color:C.muted,textAlign:"center",maxWidth:280,lineHeight:1.6}}>Ajoutez des villes et lancez le radar — les biens s'affichent sur la carte.</div>
-                    {radarVilles.length>0&&(
-                      <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",marginTop:8}}>
-                        Lancer sur {radarVilles.join(", ")}
-                      </button>
-                    )}
+                    {radarVilles.length>0&&<button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",marginTop:8}}>Lancer sur {radarVilles.join(", ")}</button>}
                   </div>
                 )
               )}
             </div>
 
-            {/* RIGHT: panneau bien sélectionné */}
-            {radarSelected&&(
-              <div style={{width:336,borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card,animation:"slideInRight 0.18s ease"}}>
-                {/* Header bien */}
-                <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
-                  <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:8}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2}}>{radarSelected.adresse}</div>
-                      <div style={{fontSize:11,color:C.muted}}>{radarSelected.ville}</div>
+            {/* RIGHT: fiche parcelle ou fiche prospect */}
+            {rightOpen&&(
+              <div style={{width:340,borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card,animation:"slideInRight 0.18s ease"}}>
+
+                {/* === FICHE PARCELLE === */}
+                {radarParcelPanel&&(()=>{
+                  const pp=radarParcelPanel;
+                  const {section,numero,contenance,code_insee}=pp.properties||{};
+                  const dvfHits=pp.matching.filter(p=>p.source!=="DPE");
+                  const dpeHits=pp.matching.filter(p=>p.source==="DPE");
+                  const ownerFromProspect=pp.matching.find(p=>p.proprietaire_nom);
+                  const owner=pp.owner?.proprietaire_nom?pp.owner:null;
+                  const ownerName=owner?.proprietaire_nom||ownerFromProspect?.proprietaire_nom||null;
+                  const ownerSrc=owner?.proprietaire_source||ownerFromProspect?.proprietaire_source||null;
+
+                  // Pour la lettre depuis une parcelle
+                  const parcelProspect = pp.matching[0] || {
+                    id:`parcel-${section}-${numero}`,
+                    adresse:pp.address||`Section ${section} n°${numero}`,
+                    ville:"",source:"DVF",score:0,notes:"",lat:pp.centroid[0],lng:pp.centroid[1],
+                  };
+
+                  return(
+                  <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                    {/* Header */}
+                    <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:6,marginBottom:8}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          {pp.address?(
+                            <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:4}}>{pp.address}</div>
+                          ):(
+                            <div style={{fontSize:13,color:C.muted,fontStyle:"italic",marginBottom:4}}>Chargement adresse…</div>
+                          )}
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                            <span style={{fontSize:10,fontWeight:600,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 6px"}}>Section {section} · {numero}</span>
+                            {contenance&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 6px"}}>{contenance} m²</span>}
+                            {code_insee&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 6px"}}>INSEE {code_insee}</span>}
+                          </div>
+                        </div>
+                        <button onClick={()=>setRadarParcelPanel(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15,color:C.muted,padding:"2px 4px",lineHeight:1,flexShrink:0}}>✕</button>
+                      </div>
+                      {/* Lien Pappers */}
+                      <a href={`https://immobilier.pappers.fr/parcelle/${section}${numero}`} target="_blank" rel="noopener" style={{fontSize:10,color:C.gold,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:3}}>
+                        Voir sur Pappers Immo →
+                      </a>
                     </div>
-                    <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                      <button onClick={()=>toggleLike(radarSelected)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,lineHeight:1,color:isLiked(String(radarSelected.id))?C.gold:C.border,transition:"color 0.15s",padding:"2px 4px"}} title={isLiked(String(radarSelected.id))?"Retirer du panier":"Ajouter au panier"}>
-                        {isLiked(String(radarSelected.id))?"♥":"♡"}
+
+                    {/* Corps scrollable */}
+                    <div style={{flex:1,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column",gap:14}}>
+
+                      {/* Propriétaire */}
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Propriétaire</div>
+                        {pp.ownerLoading?(
+                          <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Recherche…</div>
+                        ):ownerName?(
+                          <div style={{background:C.green+"12",border:`1px solid ${C.green}30`,borderRadius:7,padding:"8px 10px"}}>
+                            <div style={{fontSize:12,fontWeight:700,color:C.green}}>{ownerName}</div>
+                            {ownerSrc&&ownerSrc!=="inconnu"&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>via {ownerSrc}</div>}
+                          </div>
+                        ):(
+                          <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Non identifié (données publiques limitées)</div>
+                        )}
+                      </div>
+
+                      {/* Ventes DVF */}
+                      {dvfHits.length>0&&(
+                        <div>
+                          <div style={{fontSize:9,fontWeight:700,color:"#F97316",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Ventes DVF · {dvfHits.length}</div>
+                          {dvfHits.map((p,i)=>(
+                            <div key={i} style={{padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,marginBottom:5}}>
+                              <div style={{fontSize:11,fontWeight:600,color:C.text,marginBottom:2}}>{p.adresse}</div>
+                              <div style={{fontSize:10,color:C.muted,lineHeight:1.4}}>{p.notes}</div>
+                              <div style={{fontSize:10,fontWeight:700,color:"#F97316",marginTop:3}}>Score {p.score}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* DPE */}
+                      {dpeHits.length>0&&(
+                        <div>
+                          <div style={{fontSize:9,fontWeight:700,color:"#10B981",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>DPE · {dpeHits.length}</div>
+                          {dpeHits.map((p,i)=>{
+                            const cls=p.classe_dpe||"";
+                            const col=cls==="G"?"#EF4444":cls==="F"?"#F97316":cls==="E"?"#F59E0B":"#10B981";
+                            return(
+                            <div key={i} style={{padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,marginBottom:5,display:"flex",gap:8,alignItems:"center"}}>
+                              {cls&&<div style={{width:28,height:28,borderRadius:6,background:col,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,color:"#fff",flexShrink:0}}>{cls}</div>}
+                              <div style={{minWidth:0}}>
+                                <div style={{fontSize:10,color:C.text,lineHeight:1.4}}>{p.notes}</div>
+                              </div>
+                            </div>
+                          );})}
+                        </div>
+                      )}
+
+                      {/* Courrier */}
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Courrier de prospection</div>
+                        <div style={{display:"flex",gap:4,marginBottom:6}}>
+                          {[{id:"prospection",l:"Prosp."},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
+                            <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(parcelProspect,t.id);}} style={{padding:"3px 8px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer"}}>{t.l}</button>
+                          ))}
+                          {radarLetterLoading&&<span style={{fontSize:10,color:C.gold,fontWeight:500,animation:"pulse 1s infinite",alignSelf:"center",marginLeft:4}}>Génération…</span>}
+                        </div>
+                        <textarea value={radarLetterLoading?"":radarLetter} onChange={e=>setRadarLetter(e.target.value)} placeholder={radarLetterLoading?"Lucas rédige…":"Cliquez sur un type"} rows={7} style={{width:"100%",background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:7,color:C.text,padding:"8px 10px",fontSize:11,lineHeight:1.7,fontFamily:BODY,resize:"vertical",transition:"border-color 0.3s"}}/>
+                      </div>
+                    </div>
+
+                    {/* Footer envoi */}
+                    <div style={{padding:"10px 14px",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+                      <button onClick={()=>sendLetter(parcelProspect,radarLetter)} disabled={radarLetterLoading||!radarLetter} style={{width:"100%",background:radarLetterLoading||!radarLetter?C.border:C.green,color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:7,padding:"10px",fontSize:12,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",transition:"all 0.15s"}}>
+                        Envoyer par Merci Facteur
                       </button>
-                      <button onClick={()=>setRadarSelected(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15,color:C.muted,padding:"2px 4px",lineHeight:1}}>✕</button>
                     </div>
                   </div>
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:radarSelected.proprietaire_nom?8:0}}>
-                    {(()=>{const sc=radarSelected.score;const col=sc>=75?C.green:sc>=50?C.amber:C.red;return<span style={{fontSize:10,fontWeight:700,color:col,background:col+"18",border:`1px solid ${col}30`,borderRadius:4,padding:"2px 7px"}}>Score {sc}</span>;})()}
-                    {radarSelected.source==="DPE"&&radarSelected.classe_dpe&&(()=>{
-                      const cls=radarSelected.classe_dpe;const col=cls==="G"?"#EF4444":cls==="F"?"#F97316":cls==="E"?"#F59E0B":"#10B981";
-                      return<span style={{fontSize:10,fontWeight:700,color:col,background:col+"18",border:`1px solid ${col}30`,borderRadius:4,padding:"2px 7px"}}>DPE {cls}</span>;
-                    })()}
-                    {radarBasket[String(radarSelected.id)]?.dateSent&&<span style={{fontSize:10,color:C.green,fontWeight:600}}>Envoyé le {radarBasket[String(radarSelected.id)].dateSent}</span>}
-                  </div>
-                  {radarSelected.proprietaire_nom&&(
-                    <div style={{background:C.green+"12",border:`1px solid ${C.green}30`,borderRadius:7,padding:"7px 10px",fontSize:11,color:C.green,fontWeight:600}}>
-                      {radarSelected.proprietaire_nom}
-                      {radarSelected.proprietaire_source&&radarSelected.proprietaire_source!=="inconnu"&&<span style={{fontWeight:400,color:C.muted}}> · {radarSelected.proprietaire_source}</span>}
+                );})()}
+
+                {/* === FICHE PROSPECT (pin cliqué) === */}
+                {radarSelected&&!radarParcelPanel&&(
+                  <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                    <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:8}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2}}>{radarSelected.adresse}</div>
+                          <div style={{fontSize:11,color:C.muted}}>{radarSelected.ville}</div>
+                        </div>
+                        <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
+                          <button onClick={()=>toggleLike(radarSelected)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,lineHeight:1,color:isLiked(String(radarSelected.id))?C.gold:C.border,transition:"color 0.15s",padding:"2px 4px"}}>
+                            {isLiked(String(radarSelected.id))?"♥":"♡"}
+                          </button>
+                          <button onClick={()=>setRadarSelected(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15,color:C.muted,padding:"2px 4px",lineHeight:1}}>✕</button>
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:radarSelected.proprietaire_nom?8:0}}>
+                        {(()=>{const sc=radarSelected.score;const col=sc>=75?C.green:sc>=50?C.amber:C.red;return<span style={{fontSize:10,fontWeight:700,color:col,background:col+"18",border:`1px solid ${col}30`,borderRadius:4,padding:"2px 7px"}}>Score {sc}</span>;})()}
+                        {radarSelected.source==="DPE"&&radarSelected.classe_dpe&&(()=>{const cls=radarSelected.classe_dpe;const col=cls==="G"?"#EF4444":cls==="F"?"#F97316":cls==="E"?"#F59E0B":"#10B981";return<span style={{fontSize:10,fontWeight:700,color:col,background:col+"18",border:`1px solid ${col}30`,borderRadius:4,padding:"2px 7px"}}>DPE {cls}</span>;})()}
+                        {radarBasket[String(radarSelected.id)]?.dateSent&&<span style={{fontSize:10,color:C.green,fontWeight:600}}>Envoyé le {radarBasket[String(radarSelected.id)].dateSent}</span>}
+                      </div>
+                      {radarSelected.proprietaire_nom&&<div style={{background:C.green+"12",border:`1px solid ${C.green}30`,borderRadius:7,padding:"7px 10px",fontSize:11,color:C.green,fontWeight:600}}>{radarSelected.proprietaire_nom}{radarSelected.proprietaire_source&&radarSelected.proprietaire_source!=="inconnu"&&<span style={{fontWeight:400,color:C.muted}}> · {radarSelected.proprietaire_source}</span>}</div>}
+                      {radarSelected.notes&&<div style={{fontSize:10,color:C.muted,marginTop:6,lineHeight:1.4}}>{radarSelected.notes}</div>}
                     </div>
-                  )}
-                  {radarSelected.notes&&<div style={{fontSize:10,color:C.muted,marginTop:6,lineHeight:1.4}}>{radarSelected.notes}</div>}
-                </div>
-                {/* Courrier */}
-                <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
-                  <div style={{display:"flex",gap:4}}>
-                    {[{id:"prospection",l:"Prospection"},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
-                      <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(radarSelected,t.id);}} style={{padding:"3px 8px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer",transition:"all 0.12s"}}>{t.l}</button>
-                    ))}
-                    {radarLetterLoading&&<span style={{fontSize:10,color:C.gold,fontWeight:500,animation:"pulse 1s infinite",alignSelf:"center",marginLeft:4}}>Génération…</span>}
+                    <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
+                      <div style={{display:"flex",gap:4}}>
+                        {[{id:"prospection",l:"Prospection"},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
+                          <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(radarSelected,t.id);}} style={{padding:"3px 8px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer",transition:"all 0.12s"}}>{t.l}</button>
+                        ))}
+                        {radarLetterLoading&&<span style={{fontSize:10,color:C.gold,fontWeight:500,animation:"pulse 1s infinite",alignSelf:"center",marginLeft:4}}>Génération…</span>}
+                      </div>
+                      <textarea value={radarLetterLoading?"":radarLetter} onChange={e=>setRadarLetter(e.target.value)} placeholder={radarLetterLoading?"Lucas rédige le courrier…":"Sélectionnez un type de courrier"} style={{flex:1,minHeight:220,background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:11,lineHeight:1.7,fontFamily:BODY,resize:"none",transition:"border-color 0.3s"}}/>
+                    </div>
+                    <div style={{padding:"12px 14px",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+                      <button onClick={()=>sendLetter(radarSelected,radarLetter)} disabled={radarLetterLoading||!radarLetter} style={{width:"100%",background:radarLetterLoading||!radarLetter?C.border:C.green,color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",transition:"all 0.15s",marginBottom:6}}>
+                        Envoyer par Merci Facteur
+                      </button>
+                      <div style={{fontSize:9,color:C.muted,textAlign:"center"}}>{isLiked(String(radarSelected.id))?"Dans le panier":"Ajout automatique au panier après envoi"}</div>
+                    </div>
                   </div>
-                  <textarea value={radarLetterLoading?"":radarLetter} onChange={e=>setRadarLetter(e.target.value)} placeholder={radarLetterLoading?"Lucas rédige le courrier…":"Sélectionnez un type de courrier"} style={{flex:1,minHeight:220,background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:11,lineHeight:1.7,fontFamily:BODY,resize:"none",transition:"border-color 0.3s"}}/>
-                </div>
-                {/* Envoi */}
-                <div style={{padding:"12px 14px",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
-                  <button onClick={()=>sendLetter(radarSelected,radarLetter)} disabled={radarLetterLoading||!radarLetter} style={{width:"100%",background:radarLetterLoading||!radarLetter?C.border:C.green,color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",transition:"all 0.15s",marginBottom:6}}>
-                    Envoyer par Merci Facteur
-                  </button>
-                  <div style={{fontSize:9,color:C.muted,textAlign:"center",lineHeight:1.4}}>
-                    {isLiked(String(radarSelected.id))?"Dans le panier · envoi enregistré":"Non dans le panier — ajout automatique après envoi"}
-                  </div>
-                </div>
+                )}
               </div>
             )}
           </div>);
