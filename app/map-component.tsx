@@ -32,21 +32,31 @@ const C_DVF  = "#7C3AED"; // violet – ventes DVF / prospecteur
 const C_DPE  = "#10B981"; // green  – DPE récent
 const C_NONE = "#94A3B8"; // gray   – aucune donnée
 
-function pointInPoly(lng: number, lat: number, coords: number[][][]): boolean {
-  const ring = coords[0];
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i], [xj, yj] = ring[j];
-    if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
+// IGN APICarto returns MultiPolygon — handle both Polygon and MultiPolygon
+function isMultiPoly(coords: any): boolean {
+  return Array.isArray(coords?.[0]?.[0]?.[0]);
 }
 
-function centroidOf(coords: number[][][]): [number, number] {
-  const ring = coords[0];
+function pointInPoly(lng: number, lat: number, coords: any): boolean {
+  const polys: number[][][][] = isMultiPoly(coords) ? coords : [coords];
+  for (const poly of polys) {
+    const ring = poly[0];
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
+function centroidOf(coords: any): [number, number] {
+  const polys: number[][][][] = isMultiPoly(coords) ? coords : [coords];
+  const ring = polys[0][0];
   return [
-    ring.reduce((s, c) => s + c[1], 0) / ring.length,
-    ring.reduce((s, c) => s + c[0], 0) / ring.length,
+    ring.reduce((s: number, c: number[]) => s + c[1], 0) / ring.length,
+    ring.reduce((s: number, c: number[]) => s + c[0], 0) / ring.length,
   ];
 }
 
@@ -349,12 +359,12 @@ export default function MapComponent({
     parcLayerRef.current = L.geoJSON(parcCache.current, {
       style: (feature: any) => {
         const coords = feature.geometry?.coordinates;
-        if (!coords) return { color: C_NONE, weight: 0.8, fillColor: C_NONE, fillOpacity: 0.06, opacity: 0.35 };
+        if (!coords) return { color: C_NONE, weight: 1, fillColor: C_NONE, fillOpacity: 0.08, opacity: 0.55 };
         const dvf  = lrs?.ventes ? ps.filter(p=>p.lat&&p.lng&&p.source!=="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
         const dpe  = lrs?.dpe   ? ps.filter(p=>p.lat&&p.lng&&p.source==="DPE"&&pointInPoly(p.lng,p.lat,coords)) : [];
         const hasSig = dvf.length > 0 || dpe.length > 0;
         const col = dvf.length ? C_DVF : dpe.length ? C_DPE : C_NONE;
-        return { color: col, weight: hasSig ? 2 : 0.8, fillColor: col, fillOpacity: hasSig ? 0.22 : 0.06, opacity: hasSig ? 0.9 : 0.35 };
+        return { color: col, weight: hasSig ? 2.5 : 1, fillColor: col, fillOpacity: hasSig ? 0.3 : 0.08, opacity: hasSig ? 1 : 0.55 };
       },
       onEachFeature: (feature: any, layer: any) => {
         const coords = feature.geometry?.coordinates;
