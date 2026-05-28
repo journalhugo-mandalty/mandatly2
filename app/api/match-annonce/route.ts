@@ -447,7 +447,7 @@ function aggregateMutations(text: string): any[] {
 }
 
 type DvfMatch = { adresse:string; commune:string; lat:number; lng:number; surface_bati:number; surface_terrain:number; confidence:"high"|"medium"; candidates?: DvfMatch[] };
-type DvfPool = { match: DvfMatch|null; allTypePool: any[] };
+type DvfPool = { match: DvfMatch|null; allTypePool: any[]; insee: string };
 
 async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number, surface: number, terrain: number, type: string): Promise<DvfPool> {
   try {
@@ -469,7 +469,7 @@ async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number
         if (f) { insee = f.properties.citycode || ""; dept = insee.slice(0, insee.startsWith("97") ? 3 : 2); }
       }
     }
-    if (!insee || !dept) return { match: null, allTypePool: [] };
+    if (!insee || !dept) return { match: null, allTypePool: [], insee: "" };
 
     // Fetch DVF 2021-2025, agréger par mutation
     const years = [2021, 2022, 2023, 2024, 2025];
@@ -496,19 +496,84 @@ async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number
     if (terrain > 100) {
       const tMin = terrain * 0.70, tMax = terrain * 1.40;
       const withT = pool.filter(r => r.surface_terrain >= tMin && r.surface_terrain <= tMax);
-      if (withT.length === 1) return { match: { ...withT[0], confidence: "high" }, allTypePool };
+      if (withT.length === 1) return { match: { ...withT[0], confidence: "high" }, allTypePool, insee };
       if (withT.length >= 2 && withT.length <= 5) {
-        return { match: { ...withT[0], confidence: "medium", candidates: withT }, allTypePool };
+        return { match: { ...withT[0], confidence: "medium", candidates: withT }, allTypePool, insee };
       }
     }
 
     // Sans terrain ou terrain trop commun : unicité dans la commune
-    if (pool.length === 1) return { match: { ...pool[0], confidence: "high" }, allTypePool };
+    if (pool.length === 1) return { match: { ...pool[0], confidence: "high" }, allTypePool, insee };
     if (pool.length >= 2 && pool.length <= 4) {
-      return { match: { ...pool[0], confidence: "medium", candidates: pool }, allTypePool };
+      return { match: { ...pool[0], confidence: "medium", candidates: pool }, allTypePool, insee };
     }
-    return { match: null, allTypePool };
-  } catch { return { match: null, allTypePool: [] }; }
+    return { match: null, allTypePool, insee };
+  } catch { return { match: null, allTypePool: [], insee: "" }; }
+}
+
+// ── Pappers Immobilier — recherche par commune + surface cadastrale ───────────
+
+async function geocodeAddress(adresse: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const r = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(adresse)}&limit=1`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const f = d.features?.[0];
+    if (!f) return null;
+    const [lng, lat] = f.geometry.coordinates as [number, number];
+    return (lat && lng) ? { lat, lng } : null;
+  } catch { return null; }
+}
+
+// Recherche par commune + surface — sans bases (1 crédit/parcelle retournée)
+async function pappersImmoSearchCandidates(
+  insee: string,
+  surface: number,
+  apiKey: string,
+  limit = 6
+): Promise<Array<{ numero: string; adresse: string; contenance: number | null }>> {
+  if (!apiKey || !insee) return [];
+  try {
+    const sMin = Math.floor(surface * 0.5);
+    const sMax = Math.ceil(surface * 2.5);
+    const url = `https://api-immobilier.pappers.fr/v1/parcelles?code_commune=${insee}&surface_batiment_min=${sMin}&surface_batiment_max=${sMax}&par_page=${limit}`;
+    const r = await fetch(url, { headers: { "api-key": apiKey }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.resultats || [])
+      .filter((p: any) => p.numero && p.adresse)
+      .map((p: any) => ({ numero: p.numero as string, adresse: p.adresse as string, contenance: (p.contenance as number) || null }));
+  } catch { return []; }
+}
+
+// Lookup propriétaires par numéro de parcelle exact (3-4 crédits)
+async function pappersImmoByParcelId(numero: string, apiKey: string): Promise<PappersBasicResult | null> {
+  if (!apiKey || !numero) return null;
+  try {
+    const url = `https://api-immobilier.pappers.fr/v1/parcelles/${encodeURIComponent(numero)}?bases=proprietaires&champs_supplementaires=proprietaires.personnes_physiques`;
+    const r = await fetch(url, { headers: { "api-key": apiKey }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return null;
+    const p = await r.json();
+    const rawProprios: any[] = p.proprietaires || [];
+    let owner: OwnerResult | null = null;
+    const proprietaires: PappersBasicResult["proprietaires"] = [];
+    for (const rp of rawProprios) {
+      const pps: any[] = rp.personnes_physiques || [];
+      if (pps.length > 0) {
+        for (const pp of pps) {
+          const nom = pp.nom_complet || [pp.prenoms, pp.nom_usage || pp.nom_patronymique].filter(Boolean).join(" ").trim();
+          if (nom) proprietaires.push({ nom, type: "particulier" });
+        }
+      } else if (rp.nom_entreprise) {
+        proprietaires.push({ nom: rp.nom_entreprise, type: "societe", siren: rp.siren || undefined });
+      }
+    }
+    if (proprietaires.length > 0) {
+      const first = proprietaires[0];
+      owner = { nom: first.nom, source: "pappers_immo", entreprise: first.type === "societe" ? first.nom : "", siren: first.siren, qualite: first.type === "particulier" ? "Propriétaire" : undefined };
+    }
+    return { owner, proprietaires, adresse_pappers: p.adresse || null };
+  } catch { return null; }
 }
 
 // ── Route ────────────────────────────────────────────────────────────────────
@@ -532,6 +597,7 @@ export async function POST(req: NextRequest) {
   // ── 0. DVF cross-match (le plus fiable : adresse exacte) ──────────────────
   const dvfPool = await dvfCrossMatch(ville, cp, lat, lng, surface, terrain, type);
   let dvfMatch = dvfPool.match;
+  const inseeCode = dvfPool.insee;
 
   // Affiner par mots-clés de l'annonce (titre + description) si match imprécis
   if (dvfMatch?.confidence === "medium" && (titre || description)) {
@@ -588,22 +654,107 @@ export async function POST(req: NextRequest) {
     if (listingB64) break;
   }
 
-  // ── 2. Vision IA 2 étapes : descriptor → scoring par candidat ──────────────
   const googleKey = process.env.GOOGLE_STREETVIEW_KEY || "";
+  const allPhotosB64: string[] = listingB64 ? [listingB64] : [];
+  let descriptorUsed: any = null;
+
+  // ── 2. Pappers Immobilier — recherche cadastrale par commune + surface ────────
+  // Source primaire : adresses officielles Fichiers Fonciers + numéro de parcelle exact
+  // → propriétaire lookup précis par /parcelles/{id} (pas de radius flou)
+  type PappersCandidate = {
+    numero: string; adresse: string; contenance: number | null;
+    lat: number; lng: number; score: number; reason: string;
+  };
+  let chosenPappers: PappersCandidate | null = null;
+  let pappersVisionScore = 0;
+  let pappersVisionReason = "";
+
+  if (pappersImmoKey && inseeCode) {
+    const rawCandidates = await pappersImmoSearchCandidates(inseeCode, surface, pappersImmoKey, 6);
+
+    if (rawCandidates.length > 0) {
+      // Géocodage BAN de chaque adresse cadastrale (gratuit)
+      const geocoded = (await Promise.all(
+        rawCandidates.map(async c => {
+          const coords = await geocodeAddress(c.adresse);
+          return coords ? { ...c, lat: coords.lat, lng: coords.lng } : null;
+        })
+      )).filter(Boolean) as Array<typeof rawCandidates[0] & { lat: number; lng: number }>;
+
+      if (geocoded.length > 0) {
+        // Extraire le descriptif visuel de l'annonce (1 seule fois)
+        let descriptor: any = null;
+        if (allPhotosB64.length > 0) {
+          descriptor = await extractVisualDescriptor(allPhotosB64, surface, type, anthropicKey);
+          descriptorUsed = descriptor;
+        }
+
+        // Scorer chaque candidat Pappers via Vision IA (aerial + street view)
+        const scored: (PappersCandidate)[] = await Promise.all(
+          geocoded.map(async c => {
+            if (!descriptor) return { ...c, score: 0, reason: "sans photos annonce" };
+            const [aerialB64, streetB64] = await Promise.all([
+              getIGNAerial(c.lat, c.lng, 130),
+              getStreetView(c.lat, c.lng, googleKey),
+            ]);
+            if (!aerialB64) return { ...c, score: 0, reason: "pas de satellite" };
+            const res = await scoreCandidateVision(descriptor, aerialB64, streetB64, c.adresse, anthropicKey);
+            return { ...c, score: res.score, reason: res.reason };
+          })
+        );
+
+        scored.sort((a, b) => b.score - a.score);
+
+        if (scored[0]?.score >= 35) {
+          chosenPappers = scored[0];
+          pappersVisionScore = scored[0].score;
+          pappersVisionReason = scored[0].reason;
+        }
+      }
+    }
+  }
+
+  // ── 3. Résultat Pappers Vision IA ─────────────────────────────────────────
+  if (chosenPappers) {
+    const geoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenPappers.lng},${chosenPappers.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
+    // Lookup propriétaire par numéro de parcelle exact (plus précis que lat/lng radius)
+    const pappersResult = await pappersImmoByParcelId(chosenPappers.numero, pappersImmoKey);
+    const owner = pappersResult?.owner ?? await findOwner(chosenPappers.adresse, cp, ville, pappersKey);
+    // Parcelle IGN depuis coordonnées BAN (précises car adresse cadastrale)
+    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenPappers.lng,chosenPappers.lat]}))}`, { signal: AbortSignal.timeout(8000) });
+    let parcel = null;
+    if (parcelRes.ok) {
+      const pd = await parcelRes.json();
+      const f = pd.features?.[0];
+      if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
+    }
+    return NextResponse.json({
+      method: pappersVisionScore >= 52 ? "pappers_vision_high" : "pappers_vision",
+      adresse: chosenPappers.adresse,
+      lat: chosenPappers.lat, lng: chosenPappers.lng,
+      parcel, owner, matched: true, geoportailUrl: geoUrl,
+      vision_used: true,
+      vision_score: pappersVisionScore,
+      vision_reason: pappersVisionReason,
+      low_confidence: pappersVisionScore < 52,
+      descriptor: descriptorUsed,
+      pappers_immo: pappersResult ? {
+        proprietaires: pappersResult.proprietaires,
+        adresse: pappersResult.adresse_pappers,
+      } : null,
+    });
+  }
+
+  // ── 4. Fallback DVF Vision IA (si Pappers search indisponible ou aucun score ≥ 35) ──
   const dvfTypePool = dvfPool.allTypePool;
   type DvfCandidate = { adresse: string; commune: string; surface_bati: number; surface_terrain: number; lat: number; lng: number; __score?: number };
   let chosenDvf: DvfCandidate | null = null;
   let visionScore = 0;
   let visionReason = "";
-  let descriptorUsed: any = null;
-
-  const allPhotosB64: string[] = listingB64 ? [listingB64] : [];
 
   if (allPhotosB64.length > 0 && dvfTypePool.length > 0) {
-    // Candidats : medium confidence DVF en priorité, sinon les 7 plus proches en surface
     const medCandidates = dvfMatch?.confidence === "medium" && dvfMatch.candidates?.length
-      ? dvfMatch.candidates
-      : null;
+      ? dvfMatch.candidates : null;
     const candidates: DvfCandidate[] = medCandidates
       ? medCandidates
       : [...dvfTypePool]
@@ -611,11 +762,10 @@ export async function POST(req: NextRequest) {
           .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
           .slice(0, 7);
 
-    // Étape 1 : extraire le descriptif visuel des photos de l'annonce
-    const descriptor = await extractVisualDescriptor(allPhotosB64, surface, type, anthropicKey);
-    descriptorUsed = descriptor;
+    // Réutiliser le descriptor Pappers si déjà calculé
+    const descriptor = descriptorUsed ?? await extractVisualDescriptor(allPhotosB64, surface, type, anthropicKey);
+    if (!descriptorUsed) descriptorUsed = descriptor;
 
-    // Étape 2 : pour chaque candidat, récupérer aerial + street view puis scorer
     if (candidates.length > 0) {
       const scored = await Promise.all(
         candidates.map(async r => {
@@ -624,29 +774,14 @@ export async function POST(req: NextRequest) {
             getStreetView(r.lat, r.lng, googleKey),
           ]);
           if (!aerialB64) return { ...r, score: 0, reason: "pas de satellite" };
-          if (!descriptor) {
-            // Pas de descriptif → fallback comparaison directe listing vs aerial
-            return { ...r, score: 30, reason: "descriptif indisponible" };
-          }
+          if (!descriptor) return { ...r, score: 30, reason: "descriptif indisponible" };
           const result = await scoreCandidateVision(descriptor, aerialB64, streetB64, r.adresse, anthropicKey);
           return { ...r, score: result.score, reason: result.reason };
         })
       );
-
-      // Trier par score décroissant
       scored.sort((a, b) => b.score - a.score);
-      if (scored[0]?.score >= 52) {
-        // Haute confiance
-        chosenDvf = scored[0];
-        visionScore = scored[0].score;
-        visionReason = scored[0].reason;
-      } else if (scored[0]?.score >= 35) {
-        // Correspondance probable — on renvoie quand même avec flag low_confidence
-        chosenDvf = scored[0];
-        visionScore = scored[0].score;
-        visionReason = scored[0].reason;
-      }
-      // Stocker les scores pour les retourner dans dvf_candidates si pas de match
+      if (scored[0]?.score >= 52) { chosenDvf = scored[0]; visionScore = scored[0].score; visionReason = scored[0].reason; }
+      else if (scored[0]?.score >= 35) { chosenDvf = scored[0]; visionScore = scored[0].score; visionReason = scored[0].reason; }
       if (!chosenDvf) {
         scored.forEach((s: any) => {
           const c = candidates.find(x => x.adresse === s.adresse && x.lat === s.lat);
@@ -656,23 +791,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Fallback surface : si Vision IA n'a pas abouti, prendre le candidat le plus proche en surface
   if (!chosenDvf && dvfTypePool.length > 0) {
     const fallback = [...dvfTypePool]
       .filter(r => r.surface_bati >= surface * 0.65 && r.surface_bati <= surface * 1.65)
       .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))[0] ?? null;
-    if (fallback) {
-      chosenDvf = fallback;
-      visionScore = 0;
-      visionReason = "identification par surface uniquement";
-    }
+    if (fallback) { chosenDvf = fallback; visionScore = 0; visionReason = "identification par surface uniquement"; }
   }
 
-  // ── 3. Résultat Vision IA ─────────────────────────────────────────────────
+  // ── 5. Résultat DVF Vision IA / surface ──────────────────────────────────────
 
   if (chosenDvf) {
     const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
-    // Pappers Immobilier — lookup 2 crédits (proprietaires uniquement)
     const pappersBasic = pappersImmoKey ? await pappersImmoBasic(chosenDvf.lat, chosenDvf.lng, pappersImmoKey) : null;
     const owner = pappersBasic?.owner ?? await findOwner(chosenDvf.adresse + ", " + chosenDvf.commune, cp, ville, pappersKey);
     const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenDvf.lng,chosenDvf.lat]}))}`, { signal: AbortSignal.timeout(8000) });
@@ -687,10 +816,9 @@ export async function POST(req: NextRequest) {
       ? `Surface DVF (${chosenDvf.surface_bati}m²) différente de l'annonce (${surface}m²) — à vérifier`
       : null;
     const isSurfaceFallback = visionScore === 0 && visionReason === "identification par surface uniquement";
-    const method = isSurfaceFallback ? "dvf_surface" : "dvf_vision";
     const lowConfidence = isSurfaceFallback || visionScore < 52;
     return NextResponse.json({
-      method,
+      method: isSurfaceFallback ? "dvf_surface" : "dvf_vision",
       dvf_surface: chosenDvf.surface_bati,
       dvf_terrain: chosenDvf.surface_terrain,
       adresse: chosenDvf.adresse + (chosenDvf.commune ? ", " + chosenDvf.commune : ""),
@@ -709,7 +837,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── 4. Aucun match — retourner les candidats DVF avec lat/lng pour comparaison visuelle ───
+  // ── 6. Aucun match — retourner les candidats DVF avec lat/lng pour comparaison visuelle ───
   const dvfBruts = dvfTypePool
     .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
     .slice(0, 5)
