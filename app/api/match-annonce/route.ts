@@ -164,7 +164,10 @@ async function scoreCandidateVision(
       const txt: string = cd.content?.[0]?.text ?? "";
       const start = txt.indexOf("{"), end = txt.lastIndexOf("}");
       if (start >= 0 && end > start) {
-        try { return JSON.parse(txt.slice(start, end+1)); } catch {}
+        try {
+          const parsed = JSON.parse(txt.slice(start, end+1));
+          return { score: parsed.score, reason: (parsed.reason ?? "").slice(0, 80) };
+        } catch {}
       }
     }
   } catch {}
@@ -572,9 +575,9 @@ export async function POST(req: NextRequest) {
         })
       );
 
-      // Trier par score décroissant, garder le meilleur si score ≥ 45
+      // Trier par score décroissant, garder le meilleur si score ≥ 52
       scored.sort((a, b) => b.score - a.score);
-      if (scored[0]?.score >= 45) {
+      if (scored[0]?.score >= 52) {
         chosenDvf = scored[0];
         visionScore = scored[0].score;
         visionReason = scored[0].reason;
@@ -594,6 +597,10 @@ export async function POST(req: NextRequest) {
       const f = pd.features?.[0];
       if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
     }
+    const surfaceWarning = surface > 0 && chosenDvf.surface_bati > 0
+      && Math.abs(chosenDvf.surface_bati - surface) / surface > 0.25
+      ? `Surface DVF (${chosenDvf.surface_bati}m²) différente de l'annonce (${surface}m²) — à vérifier`
+      : null;
     return NextResponse.json({
       method: "dvf_vision",
       dvf_surface: chosenDvf.surface_bati,
@@ -603,6 +610,7 @@ export async function POST(req: NextRequest) {
       vision_used: true,
       vision_score: visionScore,
       vision_reason: visionReason,
+      surface_warning: surfaceWarning,
       descriptor: descriptorUsed,
     });
   }

@@ -2831,6 +2831,11 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               {matchResult.descriptor.descriptif&&<div style={{fontSize:11,color:C.muted,marginTop:3,fontStyle:"italic"}}>{matchResult.descriptor.descriptif}</div>}
                             </div>
                           )}
+                          {matchResult.surface_warning&&(
+                            <div style={{fontSize:11,color:"#c8730a",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:6,padding:"5px 8px",marginTop:4}}>
+                              ⚠ {matchResult.surface_warning}
+                            </div>
+                          )}
                           {matchResult.vision_score!==null&&matchResult.vision_score>0&&(
                             <div style={{fontSize:11,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
                               Score correspondance visuelle : {matchResult.vision_score}%
