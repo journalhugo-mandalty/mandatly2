@@ -250,6 +250,7 @@ export default function App() {
     properties: any; centroid: [number,number]; matching: any[];
     address: string|null; owner: any|null; ownerLoading: boolean;
   }|null>(null);
+  const [parcelTab, setParcelTab] = useState<"ventes"|"proprietaires"|"dpe">("proprietaires");
   const [radarBasket, setRadarBasket] = useState<Record<string,{prospect:any;liked:boolean;dateSent?:string}>>(() => {
     if(typeof window==="undefined") return {};
     try{return JSON.parse(localStorage.getItem("m_radar_basket")||"{}");}catch{return {};}
@@ -890,17 +891,31 @@ export default function App() {
           };
           const handleParcelClick = async ({properties,centroid,matchingProspects}:any)=>{
             setRadarSelected(null);
+            setRadarLetter("");
+            setRadarLetterTemplate("prospection");
+            setParcelTab("proprietaires");
             setRadarParcelPanel({properties,centroid,matching:matchingProspects,address:null,owner:null,ownerLoading:true});
             const [lat,lng]=centroid;
+            let resolvedAddress:string|null=null;
             try{
               const ban=await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`).then(r=>r.json());
-              const address=ban.features?.[0]?.properties?.label||null;
-              setRadarParcelPanel(prev=>prev?{...prev,address}:prev);
+              resolvedAddress=ban.features?.[0]?.properties?.label||null;
+              setRadarParcelPanel(prev=>prev?{...prev,address:resolvedAddress}:prev);
             }catch{}
+            const buildProspect=(ownerNom?:string)=>({
+              ...(matchingProspects[0]||{id:`parcel-${properties?.section}-${properties?.numero}`,source:"DVF",score:0,notes:"",lat,lng}),
+              adresse:resolvedAddress||(matchingProspects[0]?.adresse)||`Section ${properties?.section} n°${properties?.numero}`,
+              ville:resolvedAddress?.split(",").slice(-1)[0]?.trim()||(matchingProspects[0]?.ville)||"",
+              proprietaire_nom:ownerNom||matchingProspects.find((p:any)=>p.proprietaire_nom)?.proprietaire_nom||undefined,
+            });
             try{
-              const own=await fetch(`/api/proprietaire?lat=${lat}&lng=${lng}&adresse=`).then(r=>r.json());
+              const own=await fetch(`/api/proprietaire?lat=${lat}&lng=${lng}&adresse=${encodeURIComponent(resolvedAddress||"")}`).then(r=>r.json());
               setRadarParcelPanel(prev=>prev?{...prev,owner:own,ownerLoading:false}:prev);
-            }catch{setRadarParcelPanel(prev=>prev?{...prev,ownerLoading:false}:prev);}
+              generateRadarLetterFn(buildProspect(own?.proprietaire_nom),"prospection");
+            }catch{
+              setRadarParcelPanel(prev=>prev?{...prev,ownerLoading:false}:prev);
+              generateRadarLetterFn(buildProspect(),"prospection");
+            }
           };
           const firstWithCoords=radarProspects.find(p=>p.lat&&p.lng);
           const radarMapCenter:[number,number]=firstWithCoords?[firstWithCoords.lat as number,firstWithCoords.lng as number]:[44.837,-0.579];
@@ -1035,135 +1050,149 @@ export default function App() {
                   const owner=pp.owner?.proprietaire_nom?pp.owner:null;
                   const ownerName=owner?.proprietaire_nom||ownerFromProspect?.proprietaire_nom||null;
                   const ownerSrc=owner?.proprietaire_source||ownerFromProspect?.proprietaire_source||null;
-                  const parcelProspect:any=pp.matching[0]||{
-                    id:`parcel-${section}-${numero}`,
-                    adresse:pp.address||`Section ${section} n°${numero}`,
-                    ville:pp.address?.split(",").slice(-1)[0]?.trim()||"",
-                    source:"DVF",score:0,notes:"",lat:pp.centroid[0],lng:pp.centroid[1],
-                    proprietaire_nom:ownerName||undefined,
+                  const parcelProspect:any={
+                    ...(pp.matching[0]||{id:`parcel-${section}-${numero}`,source:"DVF",score:0,notes:"",lat:pp.centroid[0],lng:pp.centroid[1]}),
+                    adresse:pp.address||(pp.matching[0]?.adresse)||`Section ${section} n°${numero}`,
+                    ville:pp.address?.split(",").slice(-1)[0]?.trim()||(pp.matching[0]?.ville)||"",
+                    proprietaire_nom:ownerName||pp.matching[0]?.proprietaire_nom||undefined,
                   };
-                  if(ownerName&&!parcelProspect.proprietaire_nom) parcelProspect.proprietaire_nom=ownerName;
 
                   return(
                   <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideInRight 0.18s ease"}}>
 
-                    {/* ── HEADER ── */}
-                    <div style={{padding:"14px 16px 10px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
-                      <div style={{display:"flex",alignItems:"flex-start",gap:6,marginBottom:6}}>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:15,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:5}}>
-                            {pp.address||<span style={{color:C.muted,fontStyle:"italic",fontSize:13}}>Récupération adresse…</span>}
-                          </div>
-                          <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
-                            <span style={{fontSize:10,fontWeight:600,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px"}}>Section {section} · {numero}</span>
-                            {contenance&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px"}}>{Number(contenance).toLocaleString("fr-FR")} m²</span>}
-                            {dvfHits.length>0&&<span style={{fontSize:10,fontWeight:700,color:"#fff",background:"#7C3AED",borderRadius:4,padding:"2px 7px"}}>DVF</span>}
-                            {dpeHits.length>0&&<span style={{fontSize:10,fontWeight:700,color:"#fff",background:"#10B981",borderRadius:4,padding:"2px 7px"}}>DPE</span>}
+                    {/* ── HEADER style Pappers ── */}
+                    <div style={{padding:"14px 16px 0",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:6,marginBottom:4}}>
+                        <div style={{minWidth:0}}>
+                          <div style={{fontSize:14,fontWeight:800,color:C.text,lineHeight:1.25,letterSpacing:"-0.01em"}}>
+                            {pp.address
+                              ?<>{pp.address.split(",").slice(0,-1).join(",").trim().toUpperCase()}<br/><span style={{fontSize:12,fontWeight:600,color:C.muted}}>{pp.address.split(",").slice(-1)[0].trim()}</span></>
+                              :<span style={{color:C.muted,fontStyle:"italic",fontSize:12}}>Chargement adresse…</span>}
                           </div>
                         </div>
-                        <button onClick={()=>setRadarParcelPanel(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:"2px 4px",lineHeight:1,flexShrink:0,fontSize:18}}>×</button>
+                        <button onClick={()=>setRadarParcelPanel(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:"2px 6px",lineHeight:1,flexShrink:0,fontSize:18,marginTop:-2}}>×</button>
+                      </div>
+                      {/* Infos parcelle (style Pappers : 3 colonnes) */}
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10,marginTop:8}}>
+                        {[
+                          ["N° parcelle",`${code_insee||""}${section||""}${numero||""}`],
+                          ["Surface",contenance?`${Number(contenance).toLocaleString("fr-FR")} m²`:"—"],
+                          ["Ventes",`${dvfHits.length}`],
+                        ].map(([lbl,val])=>(
+                          <div key={lbl} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px"}}>
+                            <div style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:2}}>{lbl}</div>
+                            <div style={{fontSize:11,fontWeight:700,color:C.text,lineHeight:1.2}}>{val}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Onglets style Pappers */}
+                      <div style={{display:"flex",gap:0,marginLeft:-2,marginRight:-2}}>
+                        {([
+                          ["proprietaires","Propriétaires"],
+                          ["ventes",`Ventes (${dvfHits.length})`],
+                          ...(dpeHits.length?[["dpe",`DPE (${dpeHits.length})`] as [string,string]]:[]),
+                        ] as [string,string][]).map(([id,lbl])=>(
+                          <button key={id} onClick={()=>setParcelTab(id as any)} style={{flex:1,padding:"7px 6px",border:"none",borderBottom:parcelTab===id?`2px solid #3B82F6`:`2px solid transparent`,background:"none",color:parcelTab===id?"#3B82F6":C.muted,fontSize:11,fontWeight:parcelTab===id?700:500,cursor:"pointer",transition:"all 0.12s",textAlign:"center"}}>{lbl}</button>
+                        ))}
+                        <button onClick={()=>setParcelTab("ventes")} style={{display:"none"}}/>
                       </div>
                     </div>
 
-                    {/* ── CORPS SCROLLABLE ── */}
-                    <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:12}}>
+                    {/* ── CONTENU ONGLET ── */}
+                    <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
 
-                      {/* Propriétaire */}
-                      <div>
-                        <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Propriétaire</div>
-                        {pp.ownerLoading?(
-                          <div style={{display:"flex",alignItems:"center",gap:6,padding:"10px",background:C.surface,borderRadius:7,border:`1px solid ${C.border}`}}>
-                            <div style={{width:8,height:8,borderRadius:"50%",background:C.gold,animation:"pulse 1s infinite",flexShrink:0}}/>
-                            <span style={{fontSize:11,color:C.muted}}>Identification en cours…</span>
-                          </div>
-                        ):ownerName?(
-                          <div style={{background:`${C.gold}10`,border:`1.5px solid ${C.gold}40`,borderRadius:8,padding:"10px 12px"}}>
-                            <div style={{display:"flex",alignItems:"center",gap:8}}>
-                              <div style={{width:32,height:32,borderRadius:"50%",background:C.gold+"20",border:`1px solid ${C.gold}40`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.gold} strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                              </div>
-                              <div style={{minWidth:0}}>
-                                <div style={{fontSize:13,fontWeight:700,color:C.gold,lineHeight:1.2}}>{ownerName}</div>
-                                {ownerSrc&&ownerSrc!=="inconnu"&&<div style={{fontSize:10,color:C.muted,marginTop:1}}>via {ownerSrc}</div>}
-                              </div>
+                      {/* Onglet Propriétaires */}
+                      {parcelTab==="proprietaires"&&(
+                        <>
+                          {pp.ownerLoading?(
+                            <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px",background:C.surface,borderRadius:8,border:`1px solid ${C.border}`}}>
+                              <div style={{width:8,height:8,borderRadius:"50%",background:"#3B82F6",animation:"pulse 1s infinite",flexShrink:0}}/>
+                              <span style={{fontSize:12,color:C.muted}}>Identification en cours…</span>
                             </div>
-                          </div>
-                        ):(
-                          <div style={{padding:"10px 12px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,fontSize:11,color:C.muted,fontStyle:"italic"}}>
-                            Propriétaire non identifié — données publiques limitées
-                          </div>
-                        )}
-                      </div>
+                          ):ownerName?(
+                            <div style={{background:"#3B82F608",border:"1px solid #3B82F630",borderRadius:8,padding:"12px 14px"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+                                <div style={{width:36,height:36,borderRadius:"50%",background:"#3B82F615",border:"1px solid #3B82F630",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                </div>
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.2}}>{ownerName}</div>
+                                  {ownerSrc&&ownerSrc!=="inconnu"&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>Source : {ownerSrc}</div>}
+                                </div>
+                              </div>
+                              {pp.owner?.entreprises?.slice(0,2).map((e:any,i:number)=>(
+                                <div key={i} style={{padding:"8px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,marginTop:6}}>
+                                  <div style={{fontSize:12,fontWeight:600,color:C.text}}>{e.nom}</div>
+                                  {e.siren&&<div style={{fontSize:10,color:C.muted,marginTop:1}}>{e.siren}</div>}
+                                  {e.activite&&<div style={{fontSize:10,color:C.muted}}>{e.activite}</div>}
+                                </div>
+                              ))}
+                            </div>
+                          ):(
+                            <div style={{padding:"14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8}}>
+                              <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Propriétaire non identifié via les données publiques.</div>
+                              <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>Consultez manuellement :</div>
+                              <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent(pp.address||"")}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:6,fontSize:11,color:"#3B82F6",fontWeight:600,textDecoration:"none"}}>
+                                Pappers Immo <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                              </a>
+                            </div>
+                          )}
 
-                      {/* Ventes DVF */}
-                      {dvfHits.length>0&&(
-                        <div>
-                          <div style={{fontSize:9,fontWeight:700,color:"#7C3AED",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Ventes DVF · {dvfHits.length} bien{dvfHits.length>1?"s":""}</div>
-                          {dvfHits.map((p,i)=>{
+                          {/* Courrier auto-généré */}
+                          <div style={{marginTop:4}}>
+                            <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Courrier Lucas</div>
+                            <div style={{display:"flex",gap:3,marginBottom:6}}>
+                              {[{id:"prospection",l:"Prospection"},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
+                                <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(parcelProspect,t.id);}} style={{flex:1,padding:"5px 4px",background:radarLetterTemplate===t.id?"#3B82F6":C.surface,color:radarLetterTemplate===t.id?"#fff":C.muted,border:`1px solid ${radarLetterTemplate===t.id?"#3B82F6":C.border}`,borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer",transition:"all 0.12s"}}>{t.l}</button>
+                              ))}
+                            </div>
+                            {radarLetterLoading&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 10px",background:C.surface,borderRadius:6,border:`1px solid ${C.gold}40`,marginBottom:5}}><div style={{width:6,height:6,borderRadius:"50%",background:C.gold,animation:"pulse 1s infinite"}}/><span style={{fontSize:10,color:C.gold}}>Lucas rédige…</span></div>}
+                            <textarea value={radarLetterLoading?"":radarLetter} onChange={e=>setRadarLetter(e.target.value)} placeholder={radarLetterLoading?"Génération…":"Choisissez un type de courrier"} rows={7} style={{width:"100%",background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:7,color:C.text,padding:"9px 11px",fontSize:11,lineHeight:1.65,fontFamily:BODY,resize:"vertical",boxSizing:"border-box",transition:"border-color 0.3s"}}/>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Onglet Ventes DVF */}
+                      {parcelTab==="ventes"&&(
+                        dvfHits.length>0?(
+                          dvfHits.map((p:any,i:number)=>{
                             const prixM2=p.surface&&p.prix_achat?Math.round(p.prix_achat/p.surface):null;
                             const annee=p.anciennete!=null?new Date().getFullYear()-p.anciennete:null;
                             return(
-                            <div key={i} style={{padding:"10px 12px",background:C.surface,border:`1px solid #7C3AED30`,borderLeft:"3px solid #7C3AED",borderRadius:"0 7px 7px 0",marginBottom:6}}>
-                              {p.prix_achat&&<div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:2}}>{p.prix_achat.toLocaleString("fr-FR")} €{prixM2&&<span style={{fontSize:11,color:C.muted,fontWeight:400}}> · {prixM2.toLocaleString("fr-FR")} €/m²</span>}</div>}
-                              <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>{[p.surface&&`${p.surface} m²`,p.type_local,p.pieces&&`${p.pieces} p.`,annee&&`Acquis ${annee}`].filter(Boolean).join(" · ")}</div>
-                              {!p.prix_achat&&<div style={{fontSize:11,color:C.muted}}>{p.notes}</div>}
+                            <div key={i} style={{padding:"12px 14px",background:C.surface,border:`1px solid ${C.border}`,borderLeft:"3px solid #7C3AED",borderRadius:"0 8px 8px 0"}}>
+                              <div style={{fontSize:18,fontWeight:800,color:C.text,marginBottom:3,letterSpacing:"-0.02em"}}>
+                                {p.prix_achat?`${p.prix_achat.toLocaleString("fr-FR")} €`:"Prix non disponible"}
+                              </div>
+                              {prixM2&&<div style={{fontSize:11,color:"#7C3AED",fontWeight:600,marginBottom:4}}>{prixM2.toLocaleString("fr-FR")} €/m²</div>}
+                              <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>{[p.surface&&`${p.surface} m²`,p.type_local,p.pieces&&`${p.pieces} pièces`,annee&&`Acheté en ${annee}`].filter(Boolean).join(" · ")}</div>
                             </div>
-                          );})}
-                        </div>
+                          );})
+                        ):(
+                          <div style={{padding:"20px",textAlign:"center",color:C.muted,fontSize:12}}>Aucune vente DVF dans cette zone</div>
+                        )
                       )}
 
-                      {/* DPE */}
-                      {dpeHits.length>0&&(
-                        <div>
-                          <div style={{fontSize:9,fontWeight:700,color:"#10B981",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>DPE récents · {dpeHits.length}</div>
-                          {dpeHits.map((p,i)=>{
-                            const cls=p.classe_dpe||"";
-                            const col=cls==="G"?"#EF4444":cls==="F"?"#F97316":cls==="E"?"#F59E0B":cls==="D"?"#6B7280":"#10B981";
-                            return(
-                            <div key={i} style={{display:"flex",gap:10,alignItems:"center",padding:"10px 12px",background:C.surface,border:`1px solid #10B98130`,borderLeft:"3px solid #10B981",borderRadius:"0 7px 7px 0",marginBottom:6}}>
-                              {cls&&<div style={{width:36,height:36,borderRadius:8,background:col,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:16,color:"#fff",flexShrink:0}}>{cls}</div>}
-                              <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>{p.notes}</div>
-                            </div>
-                          );})}
+                      {/* Onglet DPE */}
+                      {parcelTab==="dpe"&&dpeHits.map((p:any,i:number)=>{
+                        const cls=p.classe_dpe||"";
+                        const col=cls==="G"?"#EF4444":cls==="F"?"#F97316":cls==="E"?"#F59E0B":cls==="D"?"#6B7280":"#10B981";
+                        return(
+                        <div key={i} style={{display:"flex",gap:12,alignItems:"center",padding:"12px 14px",background:C.surface,border:`1px solid ${C.border}`,borderLeft:"3px solid #10B981",borderRadius:"0 8px 8px 0"}}>
+                          {cls&&<div style={{width:40,height:40,borderRadius:8,background:col,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:18,color:"#fff",flexShrink:0}}>{cls}</div>}
+                          <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>{p.notes}</div>
                         </div>
-                      )}
+                      );})}
 
-                      {/* Courrier */}
-                      <div>
-                        <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Courrier de prospection</div>
-                        <div style={{display:"flex",gap:4,marginBottom:8}}>
-                          {[{id:"prospection",l:"Prospection"},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
-                            <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(parcelProspect,t.id);}} style={{flex:1,padding:"5px 4px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:6,fontSize:10,fontWeight:600,cursor:"pointer",transition:"all 0.12s"}}>{t.l}</button>
-                          ))}
-                        </div>
-                        {radarLetterLoading&&(
-                          <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:C.surface,borderRadius:6,border:`1px solid ${C.gold}40`,marginBottom:6}}>
-                            <div style={{width:7,height:7,borderRadius:"50%",background:C.gold,animation:"pulse 1s infinite"}}/>
-                            <span style={{fontSize:11,color:C.gold}}>Lucas rédige le courrier…</span>
-                          </div>
-                        )}
-                        <textarea
-                          value={radarLetterLoading?"":radarLetter}
-                          onChange={e=>setRadarLetter(e.target.value)}
-                          placeholder={radarLetterLoading?"Génération en cours…":"Choisissez un type de courrier ci-dessus"}
-                          rows={8}
-                          style={{width:"100%",background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:11,lineHeight:1.7,fontFamily:BODY,resize:"vertical",boxSizing:"border-box",transition:"border-color 0.3s"}}
-                        />
-                      </div>
                     </div>
 
-                    {/* ── FOOTER ENVOI MERCI FACTEUR ── */}
-                    <div style={{padding:"12px 14px",borderTop:`1px solid ${C.border}`,flexShrink:0,background:C.card}}>
-                      <button
-                        onClick={()=>sendLetter(parcelProspect,radarLetter)}
-                        disabled={radarLetterLoading||!radarLetter}
-                        style={{width:"100%",background:radarLetterLoading||!radarLetter?C.border:"#10B981",color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",transition:"all 0.15s",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    {/* ── FOOTER ENVOI ── */}
+                    <div style={{padding:"10px 12px",borderTop:`1px solid ${C.border}`,flexShrink:0,background:C.card}}>
+                      <button onClick={()=>sendLetter(parcelProspect,radarLetter)} disabled={radarLetterLoading||!radarLetter}
+                        style={{width:"100%",background:radarLetterLoading||!radarLetter?C.border:"#3B82F6",color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:7,padding:"10px",fontSize:12,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",transition:"all 0.15s",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                         Envoyer par Merci Facteur
                         {radarLetter&&<span style={{fontSize:10,fontWeight:400,opacity:0.75}}>· 1,50 €</span>}
                       </button>
-                      <div style={{fontSize:9,color:C.muted,textAlign:"center",marginTop:5}}>Courrier physique · Livraison J+2</div>
                     </div>
                   </div>
                 );})()}

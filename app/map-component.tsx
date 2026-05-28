@@ -53,6 +53,34 @@ function nearbyProspects(clat: number, clng: number, prospects: Prospect[], km =
   });
 }
 
+// ── Heat map prix/m² (style Pappers Immo) ────────────────────────────────────
+function lerpColor(a: string, b: string, t: number): string {
+  const hr = (s: string, i: number) => parseInt(s.slice(i, i+2), 16);
+  const r = Math.round(hr(a,1)+(hr(b,1)-hr(a,1))*t);
+  const g = Math.round(hr(a,3)+(hr(b,3)-hr(a,3))*t);
+  const bv= Math.round(hr(a,5)+(hr(b,5)-hr(a,5))*t);
+  return `#${[r,g,bv].map(v=>v.toString(16).padStart(2,"0")).join("")}`;
+}
+function heatColor(prixM2: number): string {
+  const t = Math.max(0, Math.min(1, (prixM2-1500)/9500));
+  if (t<0.33) return lerpColor("#4ADE80","#FDE047",t/0.33);
+  if (t<0.67) return lerpColor("#FDE047","#FB923C",(t-0.33)/0.34);
+  return lerpColor("#FB923C","#EF4444",(t-0.67)/0.33);
+}
+function getHeatStyle(f: any, prospects: Prospect[]): any | null {
+  const nom = (f.properties?.nom||f.properties?.nom_com||"").toLowerCase().trim();
+  if (!nom) return null;
+  const dvfPs = prospects.filter((p:any)=>p.source!=="DPE"&&p.prix_achat&&p.surface);
+  const match = dvfPs.filter((p:any)=>{
+    const v=(p.ville||"").toLowerCase().split(/[\s-]/)[0];
+    return nom&&(nom.includes(v)||v.includes(nom.split(/[\s-]/)[0]));
+  });
+  if (match.length<2) return null;
+  const prices=match.map((p:any)=>p.prix_achat/p.surface).sort((a:number,b:number)=>a-b);
+  const median=prices[Math.floor(prices.length/2)];
+  return {fillColor:heatColor(median),fillOpacity:0.65,color:"#94A3B8",weight:1.5,opacity:0.7};
+}
+
 // ── SVG hatch pour dept/commune ───────────────────────────────────────────
 function injectPatterns(map: any) {
   const svgEl = map.getPane?.("overlayPane")?.querySelector("svg");
@@ -96,8 +124,9 @@ export default function MapComponent({
   const commLayerRef = useRef<any>(null);
   const deptCache    = useRef<any>(null);
   const commCache    = useRef<Map<string,any>>(new Map());
-  const timerRef     = useRef<any>(null);
-  const prospectsRef = useRef(prospects);
+  const timerRef        = useRef<any>(null);
+  const priceLabelRefs  = useRef<any[]>([]);
+  const prospectsRef    = useRef(prospects);
   const layersRef    = useRef(layers);
   const onParcelRef  = useRef(onParcelClick);
   const prevCenter   = useRef<[number,number]>(center);
@@ -279,8 +308,15 @@ export default function MapComponent({
     const feats:any[]=[]; for (const c of codes) { const d=commCache.current.get(c); if(d?.features) feats.push(...d.features); }
     if (!feats.length) return;
     if (commLayerRef.current) { commLayerRef.current.remove(); commLayerRef.current=null; }
+    const ps = prospectsRef.current;
     commLayerRef.current = L.geoJSON({type:"FeatureCollection",features:feats},{
-      style: geoStyle,
+      style: (f:any) => {
+        const heat=getHeatStyle(f,ps);
+        if (heat) return heat;
+        // Pas de données prix : contour signal seulement
+        const sig=hasSignal(f,"any");
+        return {color:strokeCol(f),weight:sig?2:1,fillOpacity:sig?0.08:0.04,fillColor:strokeCol(f),opacity:sig?0.8:0.25};
+      },
       onEachFeature:(feature:any,layer:any)=>{
         const nom=feature.properties?.nom||"";
         layer.bindTooltip(`<div style="font-family:-apple-system,sans-serif;font-size:11px;font-weight:600;color:#fff;">${nom}</div>`,{className:"mandatly-tooltip",sticky:true});
@@ -289,15 +325,14 @@ export default function MapComponent({
         layer.on("click",()=>map.fitBounds(layer.getBounds(),{padding:[20,20]}));
       },
     }).addTo(map);
-    injectPatterns(map);
-    setTimeout(()=>{ if(commLayerRef.current) applyFill(commLayerRef.current,patternId); },80);
   };
 
-  // ── GeoJSON parcelles colorées (zoom ≥ 14) ────────────────────────────────
+  // ── GeoJSON parcelles colorées (zoom ≥ 14) + étiquettes prix ────────────────
   const renderParcels = async () => {
     const map=mapInst.current;
     if (!map || !layersRef.current?.parcelles || map.getZoom()<Z_PARCEL) {
       if (parcLayerRef.current) { parcLayerRef.current.remove(); parcLayerRef.current=null; }
+      priceLabelRefs.current.forEach(m=>m.remove()); priceLabelRefs.current=[];
       return;
     }
     const L=(window as any).L;
@@ -310,7 +345,9 @@ export default function MapComponent({
       data=await r.json();
     } catch { return; }
     if (parcLayerRef.current) { parcLayerRef.current.remove(); parcLayerRef.current=null; }
+    priceLabelRefs.current.forEach(m=>m.remove()); priceLabelRefs.current=[];
     const ps=prospectsRef.current, lrs=layersRef.current;
+    const dvfSignalKeys=new Set<string>();
 
     parcLayerRef.current = L.geoJSON(data, {
       style: (feature:any) => {
@@ -320,9 +357,12 @@ export default function MapComponent({
         const dvf=lrs?.ventes ? nearbyProspects(clat,clng,ps.filter(p=>p.source!=="DPE")) : [];
         const dpe=lrs?.dpe   ? nearbyProspects(clat,clng,ps.filter(p=>p.source==="DPE"))  : [];
         const hasSig=dvf.length>0||dpe.length>0;
-        if (!hasSig) return {weight:0,fillOpacity:0,opacity:0}; // non-signal : tuile raster suffit
+        if (!hasSig) return {weight:0,fillOpacity:0,opacity:0};
+        const key=`${feature.properties?.section}-${feature.properties?.numero}`;
+        if (dvf.length>0) dvfSignalKeys.add(key);
         const col=dvf.length?C_DVF:C_DPE;
-        return {color:col,weight:2.5,opacity:1,fillColor:col,fillOpacity:0.28};
+        // DVF: fillOpacity=0 → hachure SVG appliquée après; DPE: vert solide
+        return {color:col,weight:2.5,opacity:1,fillColor:col,fillOpacity:dvf.length>0?0:0.3};
       },
       onEachFeature:(feature:any,layer:any)=>{
         const coords=feature.geometry?.coordinates;
@@ -331,28 +371,62 @@ export default function MapComponent({
         const dvf=nearbyProspects(clat,clng,ps.filter(p=>p.source!=="DPE"));
         const dpe=nearbyProspects(clat,clng,ps.filter(p=>p.source==="DPE"));
         const matching=[...dvf,...dpe];
-        if (!matching.length) return; // pas d'interaction sur parcelle sans signal
+        if (!matching.length) return;
         const col=dvf.length?C_DVF:C_DPE;
         const {section,numero,contenance,code_insee}=feature.properties||{};
+        const isDvf=dvf.length>0;
+
+        // ── Étiquette prix (style Pappers Immo) ──
+        const topPrix=(dvf.find((p:any)=>p.prix_achat)||dvf[0]||null) as any;
+        if (topPrix?.prix_achat>0) {
+          const prix=topPrix.prix_achat;
+          const label=prix>=1_000_000
+            ?`${(prix/1_000_000).toFixed(1).replace(/\.0$/,"").replace(".",",")} M€`
+            :`${prix.toLocaleString("fr-FR")} €`;
+          try {
+            const m=L.marker([clat,clng],{
+              icon:L.divIcon({
+                className:"",
+                html:`<div style="background:rgba(255,255,255,0.96);border:1px solid #cbd5e1;border-radius:3px;padding:2px 7px;font-size:11px;font-weight:700;color:#0f172a;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.14);font-family:-apple-system,sans-serif;transform:translate(-50%,-50%);cursor:pointer;user-select:none;">${label}</div>`,
+                iconSize:[1,1],iconAnchor:[0,0],
+              }),
+              interactive:false,
+            }).addTo(map);
+            priceLabelRefs.current.push(m);
+          } catch {}
+        }
+
         layer.bindTooltip(
           `<div style="font-family:-apple-system,sans-serif;min-width:170px;">
             <div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:3px;">Section ${section} · ${numero}</div>
             <div style="font-size:10px;color:rgba(255,255,255,0.45);">${contenance??""} m² · ${code_insee||""}</div>
-            <div style="font-size:10px;color:${col};margin-top:3px;font-weight:600;">${dvf.length?"Signal DVF":"Signal DPE"} · ${matching.length} bien(s)</div>
+            <div style="font-size:10px;color:${col};margin-top:3px;font-weight:600;">${isDvf?"Vente DVF":"Signal DPE"} · ${matching.length} bien(s)</div>
           </div>`,
           {className:"mandatly-tooltip",sticky:false}
         );
-        layer.on("mouseover",()=>layer.setStyle({weight:4,fillOpacity:0.42}));
-        layer.on("mouseout",()=>layer.setStyle({weight:2.5,fillOpacity:0.28}));
+        layer.on("mouseover",()=>layer.setStyle({weight:4,fillOpacity:isDvf?0:0.5}));
+        layer.on("mouseout",()=>layer.setStyle({weight:2.5,fillOpacity:isDvf?0:0.3}));
         layer.on("click",(e:any)=>{
           (window as any).L.DomEvent.stopPropagation(e);
-          // Zoom sur la parcelle comme Pappers Immo
-          try { map.fitBounds(layer.getBounds(), {maxZoom:19, padding:[50,50], animate:true}); } catch {}
+          try { map.fitBounds(layer.getBounds(),{maxZoom:19,padding:[50,50],animate:true}); } catch {}
           onParcelRef.current?.({properties:feature.properties,centroid:[clat,clng],matchingProspects:matching});
         });
       },
     }).addTo(map);
     markersRef.current.forEach(m=>m.bringToFront?.());
+
+    // ── Hachures SVG violettes sur parcelles DVF (style Pappers Immo) ────────
+    injectPatterns(map);
+    setTimeout(()=>{
+      if (!parcLayerRef.current) return;
+      parcLayerRef.current.eachLayer((sub:any)=>{
+        const key=`${sub.feature?.properties?.section}-${sub.feature?.properties?.numero}`;
+        if (!dvfSignalKeys.has(key)) return;
+        const el=sub.getElement?.(); if (!el) return;
+        el.setAttribute("fill","url(#ml-hv)");
+        el.setAttribute("fill-opacity","1");
+      });
+    },120);
   };
 
   // ── Master refresh ────────────────────────────────────────────────────────
@@ -366,10 +440,12 @@ export default function MapComponent({
     } else if (z>=Z_COMMUNE) {
       if (deptLayerRef.current) { deptLayerRef.current.remove(); deptLayerRef.current=null; }
       if (parcLayerRef.current) { parcLayerRef.current.remove(); parcLayerRef.current=null; }
+      priceLabelRefs.current.forEach(m=>m.remove()); priceLabelRefs.current=[];
       await renderCommunes();
     } else {
       if (commLayerRef.current) { commLayerRef.current.remove(); commLayerRef.current=null; }
       if (parcLayerRef.current) { parcLayerRef.current.remove(); parcLayerRef.current=null; }
+      priceLabelRefs.current.forEach(m=>m.remove()); priceLabelRefs.current=[];
       await renderDepts();
     }
   };
@@ -416,16 +492,31 @@ export default function MapComponent({
         </div>
 
         <div style={{position:"absolute",bottom:40,left:12,zIndex:1000,background:"rgba(10,16,28,0.88)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:8,padding:"8px 12px",backdropFilter:"blur(8px)"}}>
-          <div style={{fontSize:9,color:"rgba(255,255,255,0.4)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Légende</div>
-          {([[C_DVF,"Ventes DVF"],[C_DPE,"DPE récents"],[C_NONE,"Sans données"]] as [string,string][]).map(([col,lbl])=>(
-            <div key={lbl} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-              <svg width="16" height="10" viewBox="0 0 16 10">
-                <rect width="16" height="10" fill={col} opacity="0.28" rx="1"/>
-                <rect width="16" height="10" fill="none" stroke={col} strokeWidth="1.5" rx="1"/>
-              </svg>
-              <span style={{fontSize:10,color:"rgba(255,255,255,0.7)",fontWeight:500}}>{lbl}</span>
-            </div>
-          ))}
+          {zoom<Z_PARCEL?(
+            <>
+              <div style={{fontSize:9,color:"rgba(255,255,255,0.4)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Prix médian/m²</div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+                <div style={{width:80,height:8,borderRadius:3,background:"linear-gradient(to right,#4ADE80,#FDE047,#FB923C,#EF4444)"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",width:80}}>
+                <span style={{fontSize:9,color:"rgba(255,255,255,0.5)"}}>1 500 €</span>
+                <span style={{fontSize:9,color:"rgba(255,255,255,0.5)"}}>11 000 €</span>
+              </div>
+            </>
+          ):(
+            <>
+              <div style={{fontSize:9,color:"rgba(255,255,255,0.4)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Légende</div>
+              {([[C_DVF,"Ventes DVF (hachures)"],[C_DPE,"DPE récents"]] as [string,string][]).map(([col,lbl])=>(
+                <div key={lbl} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                  <svg width="16" height="10" viewBox="0 0 16 10">
+                    <rect width="16" height="10" fill={col} opacity="0.28" rx="1"/>
+                    <rect width="16" height="10" fill="none" stroke={col} strokeWidth="1.5" rx="1"/>
+                  </svg>
+                  <span style={{fontSize:10,color:"rgba(255,255,255,0.7)",fontWeight:500}}>{lbl}</span>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </>
