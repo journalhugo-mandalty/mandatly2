@@ -123,25 +123,25 @@ function filterByTextMatch(pool: any[], titre: string, description: string): any
   });
 }
 
-function pickBestSirene(results: any[]): {nom:string;source:string;entreprise:string} | null {
-  // 1. Prefer real estate activity codes (68.x)
+// ── Pappers ──────────────────────────────────────────────────────────────────
+
+type OwnerResult = { nom: string; source: string; entreprise: string; qualite?: string; siren?: string };
+
+function pickBestSirene(results: any[]): OwnerResult | null {
   const realEstate = results.find(r => (r.siege?.activite_principale || "").startsWith("68"));
-  // 2. Prefer SCI/SARL/foncière by name
   const sci = results.find(r => {
     const n = (r.nom_complet || r.nom_raison_sociale || "").toUpperCase();
     return n.includes("SCI") || n.includes("SARL") || n.includes("SAS") || n.includes("FONCIERE") || n.includes("IMMOB");
   });
-  // 3. Any result with dirigeants
   const withDir = results.find(r => (r.dirigeants || []).length > 0);
-
   for (const target of [realEstate, sci, withDir].filter(Boolean)) {
     if (!target) continue;
     const dgs: any[] = target.dirigeants || [];
     if (dgs.length > 0) {
       const d = dgs[0];
       const nom = [d.nom, d.prenoms].filter(Boolean).join(" ").trim();
-      const isRealEstate = (target.siege?.activite_principale || "").startsWith("68");
-      return { nom, source: isRealEstate ? "sci+dirigeant" : "sirene+dirigeant", entreprise: target.nom_complet || "" };
+      const isRE = (target.siege?.activite_principale || "").startsWith("68");
+      return { nom, source: isRE ? "sci+dirigeant" : "sirene+dirigeant", entreprise: target.nom_complet || "" };
     }
     const nomEnt = (target.nom_complet || "").split("(")[0].trim();
     if (nomEnt) return { nom: nomEnt, source: "sci", entreprise: nomEnt };
@@ -149,9 +149,68 @@ function pickBestSirene(results: any[]): {nom:string;source:string;entreprise:st
   return null;
 }
 
-async function sireneOwner(_lat: number, _lng: number, adresse: string): Promise<{nom:string;source:string;entreprise:string}|null> {
+function pickBestPappers(resultats: any[]): OwnerResult | null {
+  // Priorité : SCI / immobilier > autres sociétés
+  const isSCI = (r: any) => {
+    const n = (r.denomination || "").toUpperCase();
+    const naf = r.code_naf || "";
+    return n.includes("SCI") || n.includes("FONCIER") || n.includes("IMMOB") || naf.startsWith("68");
+  };
+  const scored = resultats.map(r => ({ r, score: isSCI(r) ? 2 : 1 }))
+    .sort((a, b) => b.score - a.score);
+  for (const { r } of scored) {
+    const dgs: any[] = r.dirigeants || [];
+    if (dgs.length > 0) {
+      const d = dgs[0];
+      const nom = [d.nom, d.prenom].filter(Boolean).join(" ").trim();
+      if (nom) return {
+        nom, source: "pappers",
+        entreprise: r.denomination || "",
+        qualite: d.qualite || "",
+        siren: r.siren || "",
+      };
+    }
+    // Entreprise sans dirigeant listé → renvoyer le nom de l'entreprise
+    const nomEnt = (r.denomination || "").split("(")[0].trim();
+    if (nomEnt) return { nom: nomEnt, source: "pappers", entreprise: nomEnt, siren: r.siren || "" };
+  }
+  return null;
+}
+
+async function pappersSearch(query: string, pappersKey: string): Promise<OwnerResult | null> {
   try {
-    // Pass 1: exact address search (works for urban properties with street number)
+    const url = `https://api.pappers.fr/v2/entreprises?q=${encodeURIComponent(query)}&api_token=${pappersKey}&_fields=siren,denomination,code_naf,dirigeants,siege&page=1&per_page=10`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const d = await res.json();
+    return pickBestPappers(d.resultats || []);
+  } catch { return null; }
+}
+
+async function findOwner(adresse: string, cp: string, ville: string, pappersKey: string): Promise<OwnerResult | null> {
+  const keyword = extractLocalityKeyword(adresse);
+
+  // ── Pappers (priorité si clé disponible) ────────────────────────────────
+  if (pappersKey) {
+    // Pass 1 : adresse complète
+    const r1 = await pappersSearch(adresse, pappersKey);
+    if (r1) return r1;
+
+    // Pass 2 : mot-clé lieu-dit + CP (ex: "Escalet 83350")
+    if (keyword && cp) {
+      const r2 = await pappersSearch(`${keyword} ${cp}`, pappersKey);
+      if (r2) return r2;
+    }
+
+    // Pass 3 : ville seule + mot-clé (ex: "Capilla Ramatuelle")
+    if (keyword && ville) {
+      const r3 = await pappersSearch(`${keyword} ${ville}`, pappersKey);
+      if (r3) return r3;
+    }
+  }
+
+  // ── Fallback Sirene (gratuit) ────────────────────────────────────────────
+  try {
     const url1 = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(adresse)}&page=1&per_page=10`;
     const res1 = await fetch(url1, { signal: AbortSignal.timeout(8000) });
     if (res1.ok) {
@@ -159,21 +218,17 @@ async function sireneOwner(_lat: number, _lng: number, adresse: string): Promise
       const pick = pickBestSirene(d1.results || []);
       if (pick) return pick;
     }
-
-    // Pass 2: locality keyword + postal code (works for rural/luxury areas with lieu-dit)
-    // Extract postal code from address
-    const cpMatch = adresse.match(/\b(\d{5})\b/);
-    const cp = cpMatch?.[1];
-    const keyword = extractLocalityKeyword(adresse);
-    if (!keyword || !cp) return null;
-
-    const q2 = `${keyword} ${cp}`;
-    const url2 = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(q2)}&page=1&per_page=10`;
-    const res2 = await fetch(url2, { signal: AbortSignal.timeout(8000) });
-    if (!res2.ok) return null;
-    const d2 = await res2.json();
-    return pickBestSirene(d2.results || []);
-  } catch { return null; }
+    if (keyword && cp) {
+      const url2 = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(`${keyword} ${cp}`)}&page=1&per_page=10`;
+      const res2 = await fetch(url2, { signal: AbortSignal.timeout(8000) });
+      if (res2.ok) {
+        const d2 = await res2.json();
+        const pick = pickBestSirene(d2.results || []);
+        if (pick) return pick;
+      }
+    }
+  } catch {}
+  return null;
 }
 
 async function reverseGeocode(lat: number, lng: number): Promise<string|null> {
@@ -294,6 +349,7 @@ async function dvfCrossMatch(ville: string, cp: string, lat: number, lng: number
 export async function POST(req: NextRequest) {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY manquante" }, { status: 503 });
+  const pappersKey = process.env.PAPPERS_API_KEY || "";
 
   const body = await req.json();
   const { lat, lng, surface = 100, terrain = 0, type = "Maison", ville = "", cp = "", titre = "", description = "", photos = [] }: {
@@ -328,7 +384,7 @@ export async function POST(req: NextRequest) {
 
   if (dvfMatch && dvfMatch.confidence === "high") {
     const [owner, parcelRes] = await Promise.all([
-      sireneOwner(dvfMatch.lat, dvfMatch.lng, dvfMatch.adresse + " " + dvfMatch.commune),
+      findOwner(dvfMatch.adresse + ", " + dvfMatch.commune, cp, ville, pappersKey),
       fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[dvfMatch.lng,dvfMatch.lat]}))}`, { signal: AbortSignal.timeout(8000) }),
     ]);
     let parcel = null;
@@ -436,7 +492,7 @@ export async function POST(req: NextRequest) {
 
   if (chosenDvf) {
     const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
-    const owner = await sireneOwner(chosenDvf.lat, chosenDvf.lng, chosenDvf.adresse + " " + chosenDvf.commune);
+    const owner = await findOwner(chosenDvf.adresse + ", " + chosenDvf.commune, cp, ville, pappersKey);
     const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenDvf.lng,chosenDvf.lat]}))}`, { signal: AbortSignal.timeout(8000) });
     let parcel = null;
     if (parcelRes.ok) {

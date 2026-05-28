@@ -2782,13 +2782,25 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                           )}
                           {matchResult.owner?.nom?(
                             <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
-                              <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:2}}>Proprietaire identifié</div>
-                              <div style={{fontSize:13,fontWeight:700,color:C.text}}>{matchResult.owner.nom}</div>
-                              {matchResult.owner.entreprise&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.entreprise}</div>}
+                              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                                <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em"}}>Propriétaire identifié</div>
+                                {matchResult.owner.source==="pappers"&&<span style={{fontSize:9,fontWeight:700,color:C.blue,background:C.blue+"18",border:`1px solid ${C.blue}30`,borderRadius:3,padding:"1px 5px"}}>Pappers</span>}
+                              </div>
+                              <div style={{fontSize:14,fontWeight:700,color:C.text}}>{matchResult.owner.nom}</div>
+                              {matchResult.owner.qualite&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.qualite}</div>}
+                              {matchResult.owner.entreprise&&matchResult.owner.entreprise!==matchResult.owner.nom&&(
+                                <div style={{fontSize:11,color:C.muted,marginTop:1}}>{matchResult.owner.entreprise}</div>
+                              )}
+                              {matchResult.owner.siren&&(
+                                <a href={`https://www.pappers.fr/entreprise/${matchResult.owner.siren}`} target="_blank" rel="noopener noreferrer"
+                                  style={{display:"inline-block",marginTop:4,fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>
+                                  SIREN {matchResult.owner.siren} →
+                                </a>
+                              )}
                             </div>
                           ):(
                             <div style={{fontSize:11,color:C.muted,marginBottom:10}}>
-                              Aucun propriétaire trouvé dans Sirene
+                              Aucun propriétaire trouvé (particulier ou SCI non répertoriée)
                               {matchResult.adresse&&<span style={{display:"block",marginTop:3,color:C.text,fontWeight:500}}>{matchResult.adresse}</span>}
                             </div>
                           )}
