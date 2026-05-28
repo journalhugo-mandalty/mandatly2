@@ -135,6 +135,11 @@ export default function MapComponent({
           const coords = feat.geometry?.coordinates;
           const [clat, clng] = coords ? centroidOf(coords) : [lat, lng];
           const matching = nearbyProspects(clat, clng, prospectsRef.current);
+          // Zoom sur la parcelle cliquée
+          try {
+            const bounds = (window as any).L.geoJSON(feat).getBounds();
+            if (bounds.isValid()) map.fitBounds(bounds, {maxZoom:19, padding:[50,50], animate:true});
+          } catch {}
           onParcelRef.current?.({ properties: feat.properties, centroid:[clat,clng], matchingProspects: matching });
         } catch {}
       });
@@ -341,6 +346,8 @@ export default function MapComponent({
         layer.on("mouseout",()=>layer.setStyle({weight:2.5,fillOpacity:0.28}));
         layer.on("click",(e:any)=>{
           (window as any).L.DomEvent.stopPropagation(e);
+          // Zoom sur la parcelle comme Pappers Immo
+          try { map.fitBounds(layer.getBounds(), {maxZoom:19, padding:[50,50], animate:true}); } catch {}
           onParcelRef.current?.({properties:feature.properties,centroid:[clat,clng],matchingProspects:matching});
         });
       },
