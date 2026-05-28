@@ -1094,7 +1094,6 @@ export default function App() {
                         ] as [string,string][]).map(([id,lbl])=>(
                           <button key={id} onClick={()=>setParcelTab(id as any)} style={{flex:1,padding:"7px 6px",border:"none",borderBottom:parcelTab===id?`2px solid #3B82F6`:`2px solid transparent`,background:"none",color:parcelTab===id?"#3B82F6":C.muted,fontSize:11,fontWeight:parcelTab===id?700:500,cursor:"pointer",transition:"all 0.12s",textAlign:"center"}}>{lbl}</button>
                         ))}
-                        <button onClick={()=>setParcelTab("ventes")} style={{display:"none"}}/>
                       </div>
                     </div>
 

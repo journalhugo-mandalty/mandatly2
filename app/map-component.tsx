@@ -67,24 +67,33 @@ function heatColor(prixM2: number): string {
   if (t<0.67) return lerpColor("#FDE047","#FB923C",(t-0.33)/0.34);
   return lerpColor("#FB923C","#EF4444",(t-0.67)/0.33);
 }
+function normStr(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]/g," ").trim();
+}
 function getHeatStyle(f: any, prospects: Prospect[]): any | null {
-  const nom = (f.properties?.nom||f.properties?.nom_com||"").toLowerCase().trim();
-  if (!nom) return null;
+  const nom = normStr(f.properties?.nom||f.properties?.nom_com||"");
+  if (!nom || nom.length<2) return null;
   const dvfPs = prospects.filter((p:any)=>p.source!=="DPE"&&p.prix_achat&&p.surface);
+  if (!dvfPs.length) return null;
   const match = dvfPs.filter((p:any)=>{
-    const v=(p.ville||"").toLowerCase().split(/[\s-]/)[0];
-    return nom&&(nom.includes(v)||v.includes(nom.split(/[\s-]/)[0]));
+    const v = normStr(p.ville||"");
+    if (!v) return false;
+    // Exact match or one contains the other (handles "Bordeaux" vs "bordeaux", "Saint X" vs "saint-x")
+    return nom===v || nom.startsWith(v) || v.startsWith(nom) || nom.includes(v) || v.includes(nom);
   });
   if (match.length<2) return null;
   const prices=match.map((p:any)=>p.prix_achat/p.surface).sort((a:number,b:number)=>a-b);
   const median=prices[Math.floor(prices.length/2)];
-  return {fillColor:heatColor(median),fillOpacity:0.65,color:"#94A3B8",weight:1.5,opacity:0.7};
+  return {fillColor:heatColor(median),fillOpacity:0.6,color:"#94A3B8",weight:1.5,opacity:0.65};
 }
 
 // ── SVG hatch pour dept/commune ───────────────────────────────────────────
 function injectPatterns(map: any) {
-  const svgEl = map.getPane?.("overlayPane")?.querySelector("svg");
-  if (!svgEl || svgEl.querySelector("#ml-hv")) return;
+  const pane = map.getPane?.("overlayPane");
+  if (!pane) return;
+  const svgEl = pane.querySelector("svg");
+  if (!svgEl) return;
+  if (svgEl.querySelector("#ml-hv")) return;
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   const make = (id: string, col: string) => {
     const pat = document.createElementNS("http://www.w3.org/2000/svg", "pattern");
@@ -384,11 +393,12 @@ export default function MapComponent({
             ?`${(prix/1_000_000).toFixed(1).replace(/\.0$/,"").replace(".",",")} M€`
             :`${prix.toLocaleString("fr-FR")} €`;
           try {
+            const w=Math.max(60,label.length*7+16), h=22;
             const m=L.marker([clat,clng],{
               icon:L.divIcon({
                 className:"",
-                html:`<div style="background:rgba(255,255,255,0.96);border:1px solid #cbd5e1;border-radius:3px;padding:2px 7px;font-size:11px;font-weight:700;color:#0f172a;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.14);font-family:-apple-system,sans-serif;transform:translate(-50%,-50%);cursor:pointer;user-select:none;">${label}</div>`,
-                iconSize:[1,1],iconAnchor:[0,0],
+                html:`<div style="background:rgba(255,255,255,0.96);border:1px solid #cbd5e1;border-radius:3px;padding:2px 7px;font-size:11px;font-weight:700;color:#0f172a;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.14);font-family:-apple-system,sans-serif;user-select:none;display:inline-block;">${label}</div>`,
+                iconSize:[w,h],iconAnchor:[w/2,h/2],
               }),
               interactive:false,
             }).addTo(map);
@@ -416,9 +426,9 @@ export default function MapComponent({
     markersRef.current.forEach(m=>m.bringToFront?.());
 
     // ── Hachures SVG violettes sur parcelles DVF (style Pappers Immo) ────────
-    injectPatterns(map);
-    setTimeout(()=>{
+    const applyDvfStripes = () => {
       if (!parcLayerRef.current) return;
+      injectPatterns(map);
       parcLayerRef.current.eachLayer((sub:any)=>{
         const key=`${sub.feature?.properties?.section}-${sub.feature?.properties?.numero}`;
         if (!dvfSignalKeys.has(key)) return;
@@ -426,7 +436,9 @@ export default function MapComponent({
         el.setAttribute("fill","url(#ml-hv)");
         el.setAttribute("fill-opacity","1");
       });
-    },120);
+    };
+    setTimeout(applyDvfStripes, 80);
+    setTimeout(applyDvfStripes, 300); // double passe si le premier rate
   };
 
   // ── Master refresh ────────────────────────────────────────────────────────
