@@ -244,6 +244,11 @@ export default function App() {
   const [radarLetterTemplate, setRadarLetterTemplate] = useState("prospection");
   const [radarView, setRadarView] = useState<"cards"|"map">("cards");
   const [dpeMapLoading, setDpeMapLoading] = useState(false);
+  const [radarSelected, setRadarSelected] = useState<any>(null);
+  const [radarBasket, setRadarBasket] = useState<Record<string,{prospect:any;liked:boolean;dateSent?:string}>>(() => {
+    if(typeof window==="undefined") return {};
+    try{return JSON.parse(localStorage.getItem("m_radar_basket")||"{}");}catch{return {};}
+  });
   // Gamification
   const [courriersSent, setCourriersSent] = useState(()=>{
     if(typeof window==="undefined") return 0;
@@ -276,6 +281,7 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("m_rdvs",JSON.stringify(rdvs));},[rdvs]);
   useEffect(()=>{localStorage.setItem("m_courriers",JSON.stringify(courrierHisto));},[courrierHisto]);
   useEffect(()=>{localStorage.setItem("m_radar_villes",JSON.stringify(radarVilles));},[radarVilles]);
+  useEffect(()=>{localStorage.setItem("m_radar_basket",JSON.stringify(radarBasket));},[radarBasket]);
   useEffect(()=>{localStorage.setItem("m_crm_statuses",JSON.stringify(crmStatuses));},[crmStatuses]);
   useEffect(()=>{localStorage.setItem("m_prosp_crm",JSON.stringify(prospCrm));},[prospCrm]);
   useEffect(()=>{localStorage.setItem("m_sent_count",String(courriersSent));},[courriersSent]);
@@ -562,7 +568,7 @@ export default function App() {
 
   const loadRadar = useCallback(async () => {
     if (!radarVilles.length) return;
-    setRadarLoading(true); setRadarProspects([]); setRadarIdx(0);
+    setRadarLoading(true); setRadarProspects([]); setRadarIdx(0); setRadarSelected(null);
     const all: Prospect[] = [];
     for (const v of radarVilles) {
       try {
@@ -580,7 +586,7 @@ export default function App() {
       .slice(0,60);
     setRadarProspects(sorted);
     setRadarLoading(false);
-    if(sorted.length>0) generateRadarLetterFn(sorted[0], radarLetterTemplate);
+    setRadarView("map");
     // Enrichissement propriétaire en arrière-plan sur les 20 premiers
     const toEnrich = sorted.filter(p => p.lat && p.lng).slice(0, 20);
     for (let i = 0; i < toEnrich.length; i += 4) {
@@ -788,6 +794,8 @@ export default function App() {
         @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
         @keyframes shimmer{0%{opacity:0.5}50%{opacity:1}100%{opacity:0.5}}
+        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        @keyframes slideInRight{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
         input:focus,select:focus,textarea:focus{outline:none;}
         button{font-family:${BODY};}
         input,select,textarea{font-family:${BODY};}
@@ -841,258 +849,166 @@ export default function App() {
       {/* CONTENT */}
       <div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
 
-        {/* DASHBOARD */}
+        {/* RADAR */}
         {nav==="radar"&&(()=>{
-          const radarCurrent = radarProspects[radarIdx] || null;
-          const radarTotal = radarProspects.length;
-          const toValidate = radarProspects.filter((_,i)=>i>=radarIdx).length;
-          const taux = courriersSent>0 ? ((mandatsFromProsp/courriersSent)*100).toFixed(1) : "0";
-          const validateCurrent = ()=>{
-            if(!radarCurrent) return;
-            setCourrierHisto(h=>[...h,{id:Date.now(),prospect_id:radarCurrent.id,prospect_adresse:radarCurrent.adresse,prospect_ville:radarCurrent.ville,date:new Date().toLocaleDateString("fr-FR"),template:radarLetterTemplate,statut:"envoye",content:radarLetter}]);
+          const basketItems = Object.values(radarBasket).sort((a:any,b:any)=>{
+            if(a.liked&&!b.liked) return -1; if(!a.liked&&b.liked) return 1;
+            return (b.dateSent||"").localeCompare(a.dateSent||"");
+          });
+          const isLiked = (id:string)=>!!radarBasket[id]?.liked;
+          const toggleLike = (p:any)=>{
+            const sid=String(p.id);
+            setRadarBasket(b=>{
+              const ex=b[sid];
+              return ex?{...b,[sid]:{...ex,liked:!ex.liked}}:{...b,[sid]:{prospect:p,liked:true}};
+            });
+          };
+          const sendLetter = (p:any,letter:string)=>{
+            if(!p||!letter) return;
+            const today=new Date().toLocaleDateString("fr-FR");
+            setCourrierHisto(h=>[...h,{id:Date.now(),prospect_id:p.id,prospect_adresse:p.adresse,prospect_ville:p.ville,date:today,template:radarLetterTemplate,statut:"envoye",content:letter}]);
             setCourriersSent(n=>n+1);
-            setCrmStatuses(s=>({...s,[String(radarCurrent.id)]:"envoye"}));
-            setRadarDone(d=>new Set([...d,String(radarCurrent.id)]));
-            const next = radarProspects[radarIdx+1];
-            if(next) generateRadarLetterFn(next, radarLetterTemplate);
-            setRadarIdx(i=>i+1);
+            const sid=String(p.id);
+            setRadarBasket(b=>({...b,[sid]:{...(b[sid]||{prospect:p,liked:false}),dateSent:today,liked:b[sid]?.liked||false}}));
+            navigator.clipboard?.writeText(letter).catch(()=>{});
           };
-          const skipCurrent = ()=>{
-            const next = radarProspects[radarIdx+1];
-            if(next) generateRadarLetterFn(next, radarLetterTemplate);
-            setRadarIdx(i=>i+1);
-          };
-          const dismissCurrent = ()=>{
-            if(!radarCurrent) return;
-            setRadarDone(d=>new Set([...d,String(radarCurrent.id)]));
-            setCrmStatuses(s=>({...s,[String(radarCurrent.id)]:"perdu"}));
-            const next = radarProspects[radarIdx+1];
-            if(next) generateRadarLetterFn(next, radarLetterTemplate);
-            setRadarIdx(i=>i+1);
-          };
+          const firstWithCoords=radarProspects.find(p=>p.lat&&p.lng);
+          const radarMapCenter:[number,number]=firstWithCoords?[firstWithCoords.lat as number,firstWithCoords.lng as number]:[44.837,-0.579];
           return (
-          <div style={{flex:1,overflowY:"auto",padding:"28px 36px",animation:"fadeUp 0.3s ease"}}>
-            {/* Header */}
-            <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:28}}>
-              <div>
-                <div style={{fontSize:11,color:C.gold,fontWeight:600,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:6}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})}</div>
-                <h1 style={{fontFamily:DISPLAY,fontSize:36,fontWeight:400,color:C.text,letterSpacing:"-0.01em",lineHeight:1,fontStyle:"italic"}}>Bonjour, {agent.prenom}</h1>
-                <div style={{fontSize:12,color:C.muted,marginTop:6}}>Radar multi-villes — revue fiche par fiche, génération courrier individuelle</div>
-              </div>
-              <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                {(radarProspects.length>0||dpeMapLoading)&&(
-                  <div style={{display:"flex",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:3,gap:2}}>
-                    {(["cards","map"] as const).map(v=>(
-                      <button key={v} onClick={()=>setRadarView(v)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:radarView===v?C.accent:"transparent",color:radarView===v?(dark?"#080808":"#fff"):C.muted,fontSize:11,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
-                        {v==="cards"?"Fiches":"Carte"}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {streakDays>1&&<div style={{background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.amber}}>🔥 {streakDays} jours</div>}
-                <div style={{background:C.green+"12",border:`1px solid ${C.green}25`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.green}}>{courriersSent} envoyés</div>
-                {courriersSent>0&&<div style={{background:C.blue+"12",border:`1px solid ${C.blue}25`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,color:C.blue}}>{taux}% conv.</div>}
-              </div>
-            </div>
-
-            {/* KPI row */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:32}}>
-              {[
-                {l:"Mandats",v:mandats.length,sub:"actifs",nav:"mandats",col:C.text},
-                {l:"Prospects",v:radarTotal||prospects.length,sub:"dans le radar",nav:"",col:C.text},
-                {l:"À valider",v:toValidate,sub:"courriers prêts",nav:"",col:toValidate>0?C.amber:C.muted},
-                {l:"Courriers",v:courriersSent,sub:"envoyés total",nav:"courriers",col:C.green},
-                {l:"CA encaissé",v:fmt(transacs.filter(t=>t.statut==="encaisse").reduce((a,t)=>a+t.montant,0))+" €",sub:"honoraires",nav:"compta",col:C.gold},
-              ].map(k=>(
-                <div key={k.l} onClick={()=>k.nav&&setNav(k.nav as any)} style={{...card(),padding:"18px 20px",cursor:k.nav?"pointer":"default",transition:"transform 0.15s"}} onMouseOver={e=>{if(k.nav){e.currentTarget.style.transform="translateY(-2px)";}}} onMouseOut={e=>{e.currentTarget.style.transform="none";}}>
-                  <div style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:8}}>{k.l}</div>
-                  <div style={{fontFamily:DISPLAY,fontSize:26,fontWeight:600,color:k.col,letterSpacing:"-0.01em",lineHeight:1,marginBottom:4}}>{k.v}</div>
-                  <div style={{fontSize:10,color:C.muted}}>{k.sub}</div>
+          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            {/* LEFT: config + panier */}
+            <div style={{width:236,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card}}>
+              <div style={{padding:"16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:12}}>Radar</div>
+                <div style={{display:"flex",gap:5,marginBottom:8}}>
+                  <input value={radarVilleInput} onChange={e=>setRadarVilleInput(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter"&&radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}}
+                    placeholder="Ex: Bordeaux" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 8px",fontSize:11}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <button onClick={()=>{if(radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:6,padding:"6px 9px",fontSize:12,fontWeight:600,cursor:"pointer"}}>+</button>
                 </div>
-              ))}
-            </div>
-
-            {/* Main content: config + queue */}
-            <div style={{display:"grid",gridTemplateColumns:"260px 1fr",gap:20,alignItems:"start"}}>
-
-              {/* LEFT: Radar config */}
-              <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                <div style={{...card(),padding:"20px"}}>
-                  <div style={{fontSize:11,fontWeight:600,color:C.text,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:14}}>Villes à prospecter</div>
-                  <div style={{display:"flex",gap:6,marginBottom:10}}>
-                    <input value={radarVilleInput} onChange={e=>setRadarVilleInput(e.target.value)}
-                      onKeyDown={e=>{if(e.key==="Enter"&&radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}}
-                      placeholder="Ex: Bordeaux" style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:12}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                    <button onClick={()=>{if(radarVilleInput.trim()&&!radarVilles.includes(radarVilleInput.trim())){setRadarVilles(v=>[...v,radarVilleInput.trim()]);setRadarVilleInput("");}}} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:7,padding:"7px 11px",fontSize:13,fontWeight:600,cursor:"pointer"}}>+</button>
-                  </div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
-                    {radarVilles.map(v=>(
-                      <div key={v} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:6,padding:"3px 8px",fontSize:11,color:C.text,display:"flex",alignItems:"center",gap:4}}>
-                        {v}
-                        <button onClick={()=>setRadarVilles(vs=>vs.filter(x=>x!==v))} style={{background:"none",border:"none",color:C.muted,fontSize:12,cursor:"pointer",padding:0,lineHeight:1}}>×</button>
-                      </div>
-                    ))}
-                    {radarVilles.length===0&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Aucune ville configurée</div>}
-                  </div>
-                  <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:8,padding:"10px",fontSize:13,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
-                    {radarLoading?"Analyse en cours...":"Lancer la campagne"}
-                  </button>
-                  <button disabled={dpeMapLoading||radarVilles.length===0} onClick={loadDpeOnly} style={{width:"100%",background:"transparent",color:dpeMapLoading||radarVilles.length===0?C.muted:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px",fontSize:12,fontWeight:600,cursor:dpeMapLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s",marginTop:6}}>
-                    {dpeMapLoading?"Chargement DPE...":"Carte DPE (gratuit)"}
-                  </button>
-                </div>
-                {/* Progress */}
-                {radarTotal>0&&(
-                  <div style={{...card(),padding:"16px 20px"}}>
-                    <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Progression</div>
-                    <div style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:8}}>{Math.min(radarIdx,radarTotal)}<span style={{fontSize:13,color:C.muted,fontWeight:400}}>/{radarTotal}</span></div>
-                    <div style={{height:5,background:C.border,borderRadius:3}}>
-                      <div style={{width:`${(Math.min(radarIdx,radarTotal)/radarTotal)*100}%`,height:"100%",background:C.green,borderRadius:3,transition:"width 0.4s"}}/>
-                    </div>
-                    <div style={{fontSize:11,color:C.muted,marginTop:6}}>{toValidate} opportunité{toValidate!==1?"s":""} restante{toValidate!==1?"s":""}</div>
-                  </div>
-                )}
-                {/* Recent actions */}
-                <div style={{...card(),padding:"16px 20px"}}>
-                  <div style={{fontSize:11,fontWeight:600,color:C.text,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:12}}>Mandats</div>
-                  {mandats.slice(0,3).map((m,i)=>(
-                    <div key={m.id} onClick={()=>{setNav("mandats");setSelM(m);}} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:i<2?`1px solid ${C.border}`:"none",cursor:"pointer"}}>
-                      <div style={{width:5,height:5,borderRadius:"50%",background:PIPELINE_COLS.find(p=>p.id===m.pipeline)?.color||C.muted,flexShrink:0}}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:11,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.nom_propriete}</div>
-                        <div style={{fontSize:10,color:C.muted}}>{fmt(m.prix)} €</div>
-                      </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+                  {radarVilles.map(v=>(
+                    <div key={v} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:5,padding:"2px 7px",fontSize:10,color:C.text,display:"flex",alignItems:"center",gap:3}}>
+                      {v}<button onClick={()=>setRadarVilles(vs=>vs.filter(x=>x!==v))} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",padding:0,lineHeight:1}}>×</button>
                     </div>
                   ))}
-                  <button onClick={()=>setNav("mandats")} style={{marginTop:8,fontSize:11,color:C.gold,background:"none",border:"none",cursor:"pointer",padding:0}}>Voir tous →</button>
+                  {radarVilles.length===0&&<div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Aucune ville</div>}
                 </div>
+                <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:7,padding:"9px",fontSize:12,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s",marginBottom:6}}>
+                  {radarLoading?"Analyse…":"Lancer le radar"}
+                </button>
+                <button disabled={dpeMapLoading||radarVilles.length===0} onClick={loadDpeOnly} style={{width:"100%",background:"transparent",color:dpeMapLoading||radarVilles.length===0?C.muted:C.text,border:`1px solid ${C.border}`,borderRadius:7,padding:"7px",fontSize:11,fontWeight:600,cursor:dpeMapLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
+                  {dpeMapLoading?"Chargement…":"Carte DPE (gratuit)"}
+                </button>
+                {radarProspects.length>0&&<div style={{fontSize:10,color:C.muted,marginTop:8,textAlign:"center"}}>{radarProspects.length} biens sur la carte</div>}
               </div>
-
-              {/* RIGHT: Opportunity card, map view, or empty state */}
-              <div>
-                {radarView==="map"&&radarProspects.length>0&&(
-                  <div style={{...card(),overflow:"hidden",height:580}}>
-                    {(()=>{
-                      const firstWithCoords = radarProspects.find(p=>p.lat&&p.lng);
-                      const radarMapCenter:[number,number] = firstWithCoords ? [firstWithCoords.lat as number, firstWithCoords.lng as number] : [46.6,2.3];
-                      return <MapComponent
-                        prospects={radarProspects.filter(p=>p.lat&&p.lng) as any}
-                        center={radarMapCenter}
-                        dark={dark}
-                        onSelect={(p:any)=>{const idx=radarProspects.findIndex(x=>x.id===p.id);if(idx>=0){setRadarIdx(idx);setRadarView("cards");generateRadarLetterFn(radarProspects[idx],radarLetterTemplate);}}}
-                        satellite={true}
-                      />;
-                    })()}
-                  </div>
-                )}
-                {radarView==="cards"&&!radarProspects.length&&!radarLoading&&(
-                  <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
-                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Radar multi-villes</div>
-                    <div style={{fontSize:13,color:C.muted,marginBottom:6,lineHeight:1.6}}>Ajoutez plusieurs villes, lancez la campagne — vous passez ensuite chaque prospect en revue et générez les courriers un par un.</div>
-                    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Pour explorer une ville en détail avec la carte, utilisez <button onClick={()=>setNav("prospects")} style={{background:"none",border:"none",color:C.gold,fontSize:12,cursor:"pointer",fontWeight:600,padding:0}}>Prospection →</button></div>
-                    <div style={{display:"flex",justifyContent:"center",gap:8,flexWrap:"wrap",marginBottom:24}}>
-                      {["DVF — Ancienneté longue détention","DPE — Signaux de vente","Score propriété vendeur","Courrier prêt en 1 clic"].map(f=>(
-                        <div key={f} style={{background:C.accentBg,border:`1px solid ${C.border2}`,borderRadius:6,padding:"5px 10px",fontSize:11,color:C.text}}>{f}</div>
-                      ))}
-                    </div>
-                    {radarVilles.length>0?(
-                      <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-                        Lancer la campagne sur {radarVilles.join(", ")}
-                      </button>
-                    ):(
-                      <div style={{fontSize:12,color:C.muted}}>Ajoutez une ville dans la configuration ci-contre</div>
-                    )}
-                  </div>
-                )}
-                {radarView==="cards"&&radarCurrent&&(
-                  <div style={{...card(),padding:"32px 36px",animation:"fadeUp 0.2s ease"}}>
-                    {/* Score + source */}
-                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20}}>
-                      <div>
-                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                          {(()=>{const col=radarCurrent.score>=85?C.green:radarCurrent.score>=70?C.amber:C.red;return<div style={{fontSize:28,fontWeight:800,color:col,lineHeight:1,fontFamily:DISPLAY}}>{radarCurrent.score}</div>;})()}
-                          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                            <span style={{fontSize:9,fontWeight:600,color:radarCurrent.source==="DPE"?C.amber:C.blue,background:(radarCurrent.source==="DPE"?C.amber:C.blue)+"15",border:`1px solid ${(radarCurrent.source==="DPE"?C.amber:C.blue)}30`,borderRadius:3,padding:"1px 5px",letterSpacing:"0.08em"}}>{radarCurrent.source}</span>
-                            {radarCurrent.source==="DPE"&&radarCurrent.classe_dpe&&(
-                              <span style={{fontSize:9,fontWeight:700,color:radarCurrent.classe_dpe==="G"?"#EF4444":radarCurrent.classe_dpe==="F"?"#F97316":"#F59E0B",background:(radarCurrent.classe_dpe==="G"?"#EF4444":radarCurrent.classe_dpe==="F"?"#F97316":"#F59E0B")+"20",border:`1px solid ${radarCurrent.classe_dpe==="G"?"#EF4444":radarCurrent.classe_dpe==="F"?"#F97316":"#F59E0B"}40`,borderRadius:3,padding:"1px 5px",letterSpacing:"0.08em"}}>
-                                DPE {radarCurrent.classe_dpe} {(radarCurrent.classe_dpe==="G"||radarCurrent.classe_dpe==="F")?"· Vente probable":""}
-                              </span>
-                            )}
-                            {radarCurrent.proprietaire_nom&&<span style={{fontSize:9,fontWeight:600,color:C.gold,background:C.gold+"15",border:`1px solid ${C.gold}30`,borderRadius:3,padding:"1px 5px"}}>Propriétaire identifié</span>}
-                          </div>
+              {/* Panier */}
+              <div style={{flex:1,overflowY:"auto",padding:"12px"}}>
+                {basketItems.length>0?(
+                  <>
+                    <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:10}}>Panier · {basketItems.length}</div>
+                    {basketItems.map((item:any)=>(
+                      <div key={String(item.prospect.id)} onClick={()=>{setRadarSelected(item.prospect);generateRadarLetterFn(item.prospect,radarLetterTemplate);}} style={{padding:"8px 10px",borderRadius:7,border:`1px solid ${item.liked?C.gold+"50":C.border}`,background:item.liked?C.gold+"08":C.surface,marginBottom:6,cursor:"pointer",transition:"all 0.12s"}} onMouseOver={e=>e.currentTarget.style.borderColor=C.text} onMouseOut={e=>e.currentTarget.style.borderColor=item.liked?C.gold+"50":C.border}>
+                        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}>
+                          <span style={{fontSize:12,color:item.liked?C.gold:C.muted,flexShrink:0}}>{item.liked?"♥":"○"}</span>
+                          <div style={{fontSize:11,fontWeight:600,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.prospect.adresse}</div>
                         </div>
-                        <div style={{fontFamily:DISPLAY,fontSize:22,fontWeight:500,color:C.text,marginBottom:4,lineHeight:1.2}}>{radarCurrent.adresse}</div>
-                        <div style={{fontSize:13,color:C.muted,marginBottom:10}}>{radarCurrent.ville}</div>
-                        {/* Bloc propriétaire */}
-                        {radarCurrent.proprietaire_nom?(
-                          <div style={{background:C.green+"12",border:`1px solid ${C.green}30`,borderRadius:9,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
-                            <div style={{width:30,height:30,borderRadius:"50%",background:C.green+"20",border:`1px solid ${C.green}40`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.green} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                            </div>
-                            <div>
-                              <div style={{fontSize:11,fontWeight:600,color:C.green,textTransform:"uppercase",letterSpacing:"0.06em",lineHeight:1,marginBottom:3}}>Propriétaire identifié</div>
-                              <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.2}}>{radarCurrent.proprietaire_nom}</div>
-                              {radarCurrent.proprietaire_source&&radarCurrent.proprietaire_source!=="inconnu"&&(
-                                <div style={{fontSize:10,color:C.muted,marginTop:2}}>via {radarCurrent.proprietaire_source}</div>
-                              )}
-                            </div>
-                          </div>
-                        ):(
-                          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"9px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
-                            <div style={{width:28,height:28,borderRadius:"50%",background:C.border,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                            </div>
-                            <div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>
-                              {radarCurrent.proprietaire_chargement?"Recherche du propriétaire…":"Propriétaire non identifié"}
-                            </div>
-                          </div>
-                        )}
-                        <div style={{fontSize:12,color:C.muted}}>{radarCurrent.notes}</div>
+                        <div style={{fontSize:10,color:C.muted}}>{item.prospect.ville}</div>
+                        {item.dateSent&&<div style={{fontSize:9,color:C.green,marginTop:3,fontWeight:600}}>Envoyé le {item.dateSent}</div>}
                       </div>
-                      <div style={{display:"flex",gap:4}}>
-                        {[{id:"prospection",l:"Prosp."},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
-                          <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(radarCurrent,t.id);}} style={{padding:"3px 9px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer"}}>{t.l}</button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Letter */}
-                    <div style={{marginBottom:24}}>
-                      <div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
-                        Courrier personnalisé
-                        {radarLetterLoading&&<span style={{fontSize:9,color:C.gold,animation:"pulse 1s infinite",fontWeight:500}}>Génération en cours…</span>}
-                      </div>
-                      <textarea value={radarLetterLoading?"":radarLetter} onChange={e=>setRadarLetter(e.target.value)} rows={9} placeholder={radarLetterLoading?"Lucas rédige le courrier…":""} style={{width:"100%",background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:10,color:C.text,padding:"14px 16px",fontSize:12,lineHeight:1.7,fontFamily:BODY,resize:"vertical",transition:"border-color 0.3s"}}/>
-                    </div>
-
-                    {/* Action buttons */}
-                    <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:10}}>
-                      <button onClick={validateCurrent} disabled={radarLetterLoading||!radarLetter} style={{background:radarLetterLoading||!radarLetter?C.border:C.green,color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:10,padding:"13px",fontSize:13,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all 0.15s"}} onMouseOver={e=>{if(!radarLetterLoading&&radarLetter)e.currentTarget.style.opacity="0.85";}} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
-                        Valider l&apos;envoi
-                      </button>
-                      <button onClick={skipCurrent} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px",fontSize:13,color:C.text,fontWeight:500,cursor:"pointer",transition:"opacity 0.15s"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
-                        Passer →
-                      </button>
-                      <button onClick={dismissCurrent} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px",fontSize:13,color:C.muted,fontWeight:500,cursor:"pointer",transition:"opacity 0.15s"}} onMouseOver={e=>e.currentTarget.style.opacity="0.7"} onMouseOut={e=>e.currentTarget.style.opacity="1"}>
-                        Écarter
-                      </button>
-                    </div>
-                    <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:10}}>
-                      {radarIdx+1} / {radarTotal} · {toValidate-1 >= 0 ? toValidate-1 : 0} restant{toValidate-1!==1?"s":""}
-                    </div>
-                  </div>
-                )}
-                {radarIdx>=radarTotal&&radarTotal>0&&(
-                  <div style={{...card(),padding:"48px 40px",textAlign:"center"}}>
-                    <div style={{fontFamily:DISPLAY,fontSize:28,fontWeight:400,color:C.text,marginBottom:8,fontStyle:"italic"}}>Campagne terminée</div>
-                    <div style={{fontSize:14,color:C.muted,marginBottom:24}}>{radarIdx} opportunités traitées · {courriersSent} courriers validés</div>
-                    <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"12px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
-                      Relancer la campagne
-                    </button>
-                  </div>
+                    ))}
+                  </>
+                ):(
+                  <div style={{fontSize:10,color:C.muted,fontStyle:"italic",textAlign:"center",paddingTop:20,lineHeight:1.6}}>Aimez ♡ ou envoyez un courrier pour alimenter le panier</div>
                 )}
               </div>
             </div>
+
+            {/* CENTER: carte */}
+            <div style={{flex:1,position:"relative",background:C.bg}}>
+              {(radarLoading||dpeMapLoading)&&(
+                <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.55)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
+                  <div style={{width:34,height:34,border:`3px solid ${C.accent}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+                  <div style={{fontSize:12,color:"#fff",fontWeight:600}}>{radarLoading?"Analyse en cours…":"Chargement DPE…"}</div>
+                </div>
+              )}
+              {radarProspects.length>0?(
+                <MapComponent
+                  prospects={radarProspects.filter(p=>p.lat&&p.lng) as any}
+                  center={radarMapCenter}
+                  dark={dark}
+                  satellite={true}
+                  onSelect={(p:any)=>{setRadarSelected(p);generateRadarLetterFn(p,radarLetterTemplate);}}
+                />
+              ):(
+                !radarLoading&&!dpeMapLoading&&(
+                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
+                    <div style={{fontFamily:DISPLAY,fontSize:24,fontWeight:400,color:C.text,fontStyle:"italic",textAlign:"center"}}>Radar multi-villes</div>
+                    <div style={{fontSize:12,color:C.muted,textAlign:"center",maxWidth:280,lineHeight:1.6}}>Ajoutez des villes et lancez le radar — les biens s'affichent sur la carte.</div>
+                    {radarVilles.length>0&&(
+                      <button onClick={loadRadar} style={{background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer",marginTop:8}}>
+                        Lancer sur {radarVilles.join(", ")}
+                      </button>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+
+            {/* RIGHT: panneau bien sélectionné */}
+            {radarSelected&&(
+              <div style={{width:336,borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card,animation:"slideInRight 0.18s ease"}}>
+                {/* Header bien */}
+                <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:8}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2}}>{radarSelected.adresse}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{radarSelected.ville}</div>
+                    </div>
+                    <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
+                      <button onClick={()=>toggleLike(radarSelected)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,lineHeight:1,color:isLiked(String(radarSelected.id))?C.gold:C.border,transition:"color 0.15s",padding:"2px 4px"}} title={isLiked(String(radarSelected.id))?"Retirer du panier":"Ajouter au panier"}>
+                        {isLiked(String(radarSelected.id))?"♥":"♡"}
+                      </button>
+                      <button onClick={()=>setRadarSelected(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15,color:C.muted,padding:"2px 4px",lineHeight:1}}>✕</button>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:radarSelected.proprietaire_nom?8:0}}>
+                    {(()=>{const sc=radarSelected.score;const col=sc>=75?C.green:sc>=50?C.amber:C.red;return<span style={{fontSize:10,fontWeight:700,color:col,background:col+"18",border:`1px solid ${col}30`,borderRadius:4,padding:"2px 7px"}}>Score {sc}</span>;})()}
+                    {radarSelected.source==="DPE"&&radarSelected.classe_dpe&&(()=>{
+                      const cls=radarSelected.classe_dpe;const col=cls==="G"?"#EF4444":cls==="F"?"#F97316":cls==="E"?"#F59E0B":"#10B981";
+                      return<span style={{fontSize:10,fontWeight:700,color:col,background:col+"18",border:`1px solid ${col}30`,borderRadius:4,padding:"2px 7px"}}>DPE {cls}</span>;
+                    })()}
+                    {radarBasket[String(radarSelected.id)]?.dateSent&&<span style={{fontSize:10,color:C.green,fontWeight:600}}>Envoyé le {radarBasket[String(radarSelected.id)].dateSent}</span>}
+                  </div>
+                  {radarSelected.proprietaire_nom&&(
+                    <div style={{background:C.green+"12",border:`1px solid ${C.green}30`,borderRadius:7,padding:"7px 10px",fontSize:11,color:C.green,fontWeight:600}}>
+                      {radarSelected.proprietaire_nom}
+                      {radarSelected.proprietaire_source&&radarSelected.proprietaire_source!=="inconnu"&&<span style={{fontWeight:400,color:C.muted}}> · {radarSelected.proprietaire_source}</span>}
+                    </div>
+                  )}
+                  {radarSelected.notes&&<div style={{fontSize:10,color:C.muted,marginTop:6,lineHeight:1.4}}>{radarSelected.notes}</div>}
+                </div>
+                {/* Courrier */}
+                <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{display:"flex",gap:4}}>
+                    {[{id:"prospection",l:"Prospection"},{id:"relance",l:"Relance"},{id:"offre",l:"Offre"}].map(t=>(
+                      <button key={t.id} onClick={()=>{setRadarLetterTemplate(t.id);generateRadarLetterFn(radarSelected,t.id);}} style={{padding:"3px 8px",background:radarLetterTemplate===t.id?C.accent:C.surface,color:radarLetterTemplate===t.id?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${radarLetterTemplate===t.id?C.accent:C.border}`,borderRadius:5,fontSize:10,fontWeight:500,cursor:"pointer",transition:"all 0.12s"}}>{t.l}</button>
+                    ))}
+                    {radarLetterLoading&&<span style={{fontSize:10,color:C.gold,fontWeight:500,animation:"pulse 1s infinite",alignSelf:"center",marginLeft:4}}>Génération…</span>}
+                  </div>
+                  <textarea value={radarLetterLoading?"":radarLetter} onChange={e=>setRadarLetter(e.target.value)} placeholder={radarLetterLoading?"Lucas rédige le courrier…":"Sélectionnez un type de courrier"} style={{flex:1,minHeight:220,background:C.surface,border:`1px solid ${radarLetterLoading?C.gold:C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:11,lineHeight:1.7,fontFamily:BODY,resize:"none",transition:"border-color 0.3s"}}/>
+                </div>
+                {/* Envoi */}
+                <div style={{padding:"12px 14px",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+                  <button onClick={()=>sendLetter(radarSelected,radarLetter)} disabled={radarLetterLoading||!radarLetter} style={{width:"100%",background:radarLetterLoading||!radarLetter?C.border:C.green,color:radarLetterLoading||!radarLetter?C.muted:"#fff",border:"none",borderRadius:8,padding:"11px",fontSize:13,fontWeight:700,cursor:radarLetterLoading||!radarLetter?"default":"pointer",transition:"all 0.15s",marginBottom:6}}>
+                    Envoyer par Merci Facteur
+                  </button>
+                  <div style={{fontSize:9,color:C.muted,textAlign:"center",lineHeight:1.4}}>
+                    {isLiked(String(radarSelected.id))?"Dans le panier · envoi enregistré":"Non dans le panier — ajout automatique après envoi"}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>);
         })()}
 
