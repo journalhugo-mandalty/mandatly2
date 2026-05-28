@@ -2877,10 +2877,24 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                               {matchResult.vision_reason&&<span style={{display:"block",marginTop:1}}>{matchResult.vision_reason}</span>}
                             </div>
                           )}
-                          {matchResult.geoportailUrl&&(
-                            <a href={matchResult.geoportailUrl} target="_blank" rel="noopener noreferrer"
-                              style={{display:"block",marginTop:8,padding:"8px 0",background:C.blue+"15",border:`1px solid ${C.blue}30`,borderRadius:8,fontSize:12,color:C.blue,textAlign:"center",textDecoration:"none",fontWeight:600}}>
-                              Vue satellite IGN →
+                          <div style={{display:"flex",gap:8,marginTop:8}}>
+                            {matchResult.geoportailUrl&&(
+                              <a href={matchResult.geoportailUrl} target="_blank" rel="noopener noreferrer"
+                                style={{flex:1,display:"block",padding:"8px 0",background:C.blue+"15",border:`1px solid ${C.blue}30`,borderRadius:8,fontSize:12,color:C.blue,textAlign:"center",textDecoration:"none",fontWeight:600}}>
+                                Satellite IGN →
+                              </a>
+                            )}
+                            {matchResult.adresse&&(
+                              <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent(matchResult.adresse)}`} target="_blank" rel="noopener noreferrer"
+                                style={{flex:1,display:"block",padding:"8px 0",background:"#f0f7ff",border:"1px solid #bfdbfe",borderRadius:8,fontSize:12,color:"#1d4ed8",textAlign:"center",textDecoration:"none",fontWeight:600}}>
+                                Pappers Immo →
+                              </a>
+                            )}
+                          </div>
+                          {matchResult.parcel&&(
+                            <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent((matchResult.parcel.commune||"")+" section "+matchResult.parcel.section+" "+matchResult.parcel.numero)}`} target="_blank" rel="noopener noreferrer"
+                              style={{display:"block",marginTop:6,padding:"7px 0",background:"#f0f7ff",border:"1px solid #bfdbfe",borderRadius:8,fontSize:11,color:"#1d4ed8",textAlign:"center",textDecoration:"none"}}>
+                              Voir parcelle {matchResult.parcel.section}{matchResult.parcel.numero} sur Pappers Immobilier →
                             </a>
                           )}
                           <button onClick={()=>setMatchResult(null)} style={{marginTop:8,width:"100%",background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 0",fontSize:12,cursor:"pointer"}}>Réessayer</button>
@@ -2927,12 +2941,18 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                                   <div style={{fontSize:10,color:C.muted,marginBottom:6}}>
                                     {c.surface_bati}m² bâti{c.surface_terrain>0?` · ${c.surface_terrain}m² terrain`:""}
                                   </div>
-                                  {c.geoportailUrl&&(
-                                    <a href={c.geoportailUrl} target="_blank" rel="noopener noreferrer"
-                                      style={{fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>
-                                      Ouvrir sur Geoportail →
+                                  <div style={{display:"flex",gap:8}}>
+                                    {c.geoportailUrl&&(
+                                      <a href={c.geoportailUrl} target="_blank" rel="noopener noreferrer"
+                                        style={{fontSize:10,color:C.blue,textDecoration:"none",fontWeight:600}}>
+                                        Satellite →
+                                      </a>
+                                    )}
+                                    <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent(c.adresse)}`} target="_blank" rel="noopener noreferrer"
+                                      style={{fontSize:10,color:"#1d4ed8",textDecoration:"none",fontWeight:600}}>
+                                      Pappers Immo →
                                     </a>
-                                  )}
+                                  </div>
                                 </div>
                               </div>
                             );
