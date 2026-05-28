@@ -205,10 +205,12 @@ export async function GET(req: NextRequest) {
   const cpMatch = adresse.match(/\b(3[0-9]{4})\b/);
   const cp = cpMatch?.[1] || "33000";
 
-  // Sirene + Cadastre in parallel
+  // Sirene + Cadastre in parallel (WFS Géoplateforme, EPSG:4326 bbox = south,west,north,east)
+  const eps = 0.0002;
+  const wfsBbox = `${(parseFloat(lat)-eps).toFixed(6)},${(parseFloat(lng)-eps).toFixed(6)},${(parseFloat(lat)+eps).toFixed(6)},${(parseFloat(lng)+eps).toFixed(6)}`;
   const [cadastreRes, sireneRes] = await Promise.allSettled([
-    fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?lon=${lng}&lat=${lat}&_limit=3`, {
-      signal: AbortSignal.timeout(6000),
+    fetch(`https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle&SRSNAME=EPSG:4326&BBOX=${wfsBbox}&OUTPUTFORMAT=application/json&COUNT=3`, {
+      signal: AbortSignal.timeout(8000),
     }),
     fetch(`https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(adresse)}&size=8`, {
       signal: AbortSignal.timeout(6000),

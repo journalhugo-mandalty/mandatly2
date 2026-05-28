@@ -164,9 +164,10 @@ export default function MapComponent({
         if (map.getZoom() < Z_PARCEL || !layersRef.current?.parcelles) return;
         const { lat, lng } = e.latlng;
         const eps = 0.0003;
-        const bbox = `${(lng-eps).toFixed(6)},${(lat-eps).toFixed(6)},${(lng+eps).toFixed(6)},${(lat+eps).toFixed(6)}`;
+        // WFS EPSG:4326 bbox order: south,west,north,east (lat_min,lng_min,lat_max,lng_max)
+        const bbox = `${(lat-eps).toFixed(6)},${(lng-eps).toFixed(6)},${(lat+eps).toFixed(6)},${(lng+eps).toFixed(6)}`;
         try {
-          const r = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?bbox=${bbox}&_limit=1`, { signal: AbortSignal.timeout(6000) });
+          const r = await fetch(`https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle&SRSNAME=EPSG:4326&BBOX=${bbox}&OUTPUTFORMAT=application/json&COUNT=1`, { signal: AbortSignal.timeout(8000) });
           if (!r.ok) return;
           const data = await r.json();
           const feat = data.features?.[0]; if (!feat) return;
@@ -346,10 +347,11 @@ export default function MapComponent({
     }
     const L=(window as any).L;
     const b=map.getBounds();
-    const bbox=`${b.getWest().toFixed(6)},${b.getSouth().toFixed(6)},${b.getEast().toFixed(6)},${b.getNorth().toFixed(6)}`;
+    // WFS EPSG:4326 bbox order: south,west,north,east (lat_min,lng_min,lat_max,lng_max)
+    const bbox=`${b.getSouth().toFixed(6)},${b.getWest().toFixed(6)},${b.getNorth().toFixed(6)},${b.getEast().toFixed(6)}`;
     let data:any;
     try {
-      const r=await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?bbox=${bbox}&_limit=200`,{signal:AbortSignal.timeout(8000)});
+      const r=await fetch(`https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle&SRSNAME=EPSG:4326&BBOX=${bbox}&OUTPUTFORMAT=application/json&COUNT=200`,{signal:AbortSignal.timeout(10000)});
       if (!r.ok) return;
       data=await r.json();
     } catch { return; }
@@ -473,6 +475,12 @@ export default function MapComponent({
   },[ready]);
 
   useEffect(()=>{ if(!ready)return; refresh(); },[layers?.ventes,layers?.dpe,layers?.parcelles]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Refresh layers when prospects change (heat map, parcel colors)
+  useEffect(()=>{
+    if(!ready)return;
+    clearTimeout(timerRef.current);
+    timerRef.current=setTimeout(refresh,300);
+  },[ready,prospects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const googleUrl=`https://www.google.com/maps/@${center[0]},${center[1]},200m/data=!3m1!1e3`;
 
