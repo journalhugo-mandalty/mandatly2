@@ -786,7 +786,7 @@ export default function App() {
   );
 
   // MAIN APP
-  const NAVS = [{id:"prospects",label:"Prospection"},{id:"radar",label:"Radar"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
+  const NAVS = [{id:"radar",label:"Prospection"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:BODY,color:C.text,overflow:"hidden"}}>
