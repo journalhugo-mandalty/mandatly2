@@ -217,6 +217,16 @@ export default function App() {
   const [matchResult, setMatchResult] = useState<any>(null);
   const [fullDossierLoading, setFullDossierLoading] = useState(false);
   const [fullDossierResult, setFullDossierResult] = useState<any>(null);
+  // Veille — mode "Analyser une annonce" (saisie libre)
+  const [veilleMode, setVeilleMode] = useState<"recherche"|"analyser">("recherche");
+  const [analyserForm, setAnalyserForm] = useState({
+    ville:"", cp:"", type:"Maison" as "Maison"|"Appartement", surface:"", terrain:"",
+    description:"", photoUrls:"",
+  });
+  const [analyserLoading, setAnalyserLoading] = useState(false);
+  const [analyserResult, setAnalyserResult] = useState<any>(null);
+  const [analyserFullDossier, setAnalyserFullDossier] = useState<any>(null);
+  const [analyserFullLoading, setAnalyserFullLoading] = useState(false);
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
@@ -571,6 +581,59 @@ export default function App() {
     }
     setMatchLoading(false);
   }, []);
+
+  const handleAnalyserAnnonce = useCallback(async () => {
+    const f = analyserForm;
+    if (!f.ville.trim() || !f.surface) return;
+    setAnalyserLoading(true); setAnalyserResult(null); setAnalyserFullDossier(null);
+    try {
+      // Géocoder la ville pour obtenir lat/lng + INSEE
+      const banRes = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(f.ville+(f.cp?` ${f.cp}`:""))}&type=municipality&limit=1`);
+      const banData = await banRes.json();
+      const feat = banData.features?.[0];
+      if (!feat) throw new Error("Ville introuvable — vérifiez le nom");
+      const [lng, lat] = feat.geometry.coordinates as [number, number];
+
+      // Fetch photos depuis les URLs (côté navigateur)
+      const photoUrls = f.photoUrls.split(/[\n,]+/).map((u:string)=>u.trim()).filter(Boolean).slice(0, 5);
+      const photos: string[] = [];
+      for (const url of photoUrls) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength < 8000) continue;
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          const CHUNK = 8192;
+          for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+          }
+          photos.push(btoa(binary));
+          if (photos.length >= 3) break;
+        } catch {}
+      }
+
+      const r = await fetch("/api/match-annonce", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          lat, lng,
+          surface: parseFloat(f.surface) || 100,
+          terrain: parseFloat(f.terrain) || 0,
+          type: f.type,
+          ville: feat.properties.city || f.ville,
+          cp: f.cp || feat.properties.postcode || "",
+          description: f.description,
+          photos,
+        }),
+      });
+      setAnalyserResult(await r.json());
+    } catch (e: any) {
+      setAnalyserResult({ error: e.message || "Erreur" });
+    }
+    setAnalyserLoading(false);
+  }, [analyserForm]);
 
   const loadRadar = useCallback(async () => {
     if (!radarVilles.length) return;
@@ -2702,63 +2765,251 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
         {/* VEILLE CONCURRENCE */}
         {nav==="veille"&&(
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-            {/* Header + search */}
+            {/* Header + mode toggle */}
             <div style={{padding:"20px 28px",borderBottom:`1px solid ${C.border}`,flexShrink:0,background:C.surface}}>
-              <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:14}}>
                 <div>
-                  <h1 style={{fontSize:22,fontWeight:600,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>Veille concurrence</h1>
-                  <div style={{fontSize:13,color:C.muted}}>Annonces en vente sur votre secteur · Source : Bien'ici</div>
+                  <h1 style={{fontSize:22,fontWeight:600,color:C.text,letterSpacing:"-0.02em",marginBottom:4}}>Veille</h1>
+                  <div style={{fontSize:13,color:C.muted}}>{veilleMode==="recherche"?"Annonces en vente · Source : Bien'ici":"Identifier un bien depuis une annonce quelconque"}</div>
                 </div>
+                <div style={{display:"flex",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:3,gap:2}}>
+                  {([["recherche","Rechercher annonces"],["analyser","Analyser une annonce"]] as [string,string][]).map(([id,lbl])=>(
+                    <button key={id} onClick={()=>{setVeilleMode(id as any);setAnalyserResult(null);}} style={{padding:"5px 12px",borderRadius:5,border:"none",background:veilleMode===id?"rgba(255,255,255,0.15)":"transparent",color:veilleMode===id?C.text:C.muted,fontSize:11,fontWeight:veilleMode===id?600:400,cursor:"pointer",transition:"all 0.15s",whiteSpace:"nowrap"}}>{lbl}</button>
+                  ))}
+                </div>
+              </div>
+              {veilleMode==="recherche"&&(<>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
                   <input value={annonceVille} onChange={e=>setAnnonceVille(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter") handleAnnonces(annonceVille);}}
-                    placeholder="Ex : Bordeaux, Mérignac..." style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 14px",fontSize:13,width:220}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                      onKeyDown={e=>{if(e.key==="Enter") handleAnnonces(annonceVille);}}
+                      placeholder="Ex : Bordeaux, Mérignac..." style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"9px 14px",fontSize:13,width:220}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
                   <button disabled={annoncesLoading||!annonceVille.trim()} onClick={()=>handleAnnonces(annonceVille)}
                     style={{background:annoncesLoading?C.border:C.accent,color:annoncesLoading?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:annoncesLoading?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
                     {annoncesLoading?"...":"Analyser"}
                   </button>
                 </div>
-              </div>
-              {annoncesError&&<div style={{fontSize:12,color:C.red,marginTop:8}}>{annoncesError}</div>}
-              {annonces.length>0&&(()=>{
-                const maisons = annonces.filter(a=>a.type==="Maison");
-                const apparts = annonces.filter(a=>a.type==="Appartement");
-                const withPrixM2 = annonces.filter(a=>a.prix&&a.surface&&a.surface>0);
-                const avgPrixM2 = withPrixM2.length ? Math.round(withPrixM2.reduce((s,a)=>s+a.prix/a.surface,0)/withPrixM2.length) : 0;
-                const avgPrix = Math.round(annonces.reduce((s,a)=>s+(a.prix||0),0)/annonces.length);
-                return (
-                  <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap",alignItems:"center"}}>
-                    {[
-                      {l:`${annonces.length} annonces`},
-                      {l:`${maisons.length} maisons`,c:C.green},
-                      {l:`${apparts.length} apparts`,c:C.blue},
-                      ...(avgPrixM2>0?[{l:`~${avgPrixM2.toLocaleString("fr-FR")} €/m²`,c:C.amber}]:[]),
-                      ...(avgPrix>0?[{l:`moy. ${avgPrix.toLocaleString("fr-FR")} €`}]:[]),
-                    ].map(s=>(
-                      <div key={s.l} style={{fontSize:11,color:(s as any).c||C.muted,background:C.card,border:`1px solid ${(s as any).c?((s as any).c+"30"):C.border}`,borderRadius:6,padding:"3px 10px",fontWeight:(s as any).c?600:400}}>
-                        {s.l}
-                      </div>
-                    ))}
-                    {/* Filters */}
-                    <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
-                      {(["","Maison","Appartement"] as const).map(f=>(
-                        <button key={f} onClick={()=>setAnnoncesTypeFilter(f)} style={{padding:"3px 9px",background:annoncesTypeFilter===f?C.accent:C.card,color:annoncesTypeFilter===f?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${annoncesTypeFilter===f?C.accent:C.border}`,borderRadius:20,fontSize:11,fontWeight:annoncesTypeFilter===f?600:400,cursor:"pointer"}}>
-                          {f||"Tous"}
-                        </button>
+                {annoncesError&&<div style={{fontSize:12,color:C.red,marginTop:8}}>{annoncesError}</div>}
+                {annonces.length>0&&(()=>{
+                  const maisons = annonces.filter(a=>a.type==="Maison");
+                  const apparts = annonces.filter(a=>a.type==="Appartement");
+                  const withPrixM2 = annonces.filter(a=>a.prix&&a.surface&&a.surface>0);
+                  const avgPrixM2 = withPrixM2.length ? Math.round(withPrixM2.reduce((s,a)=>s+a.prix/a.surface,0)/withPrixM2.length) : 0;
+                  const avgPrix = Math.round(annonces.reduce((s,a)=>s+(a.prix||0),0)/annonces.length);
+                  return (
+                    <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap",alignItems:"center"}}>
+                      {[
+                        {l:`${annonces.length} annonces`},
+                        {l:`${maisons.length} maisons`,c:C.green},
+                        {l:`${apparts.length} apparts`,c:C.blue},
+                        ...(avgPrixM2>0?[{l:`~${avgPrixM2.toLocaleString("fr-FR")} €/m²`,c:C.amber}]:[]),
+                        ...(avgPrix>0?[{l:`moy. ${avgPrix.toLocaleString("fr-FR")} €`}]:[]),
+                      ].map(s=>(
+                        <div key={s.l} style={{fontSize:11,color:(s as any).c||C.muted,background:C.card,border:`1px solid ${(s as any).c?((s as any).c+"30"):C.border}`,borderRadius:6,padding:"3px 10px",fontWeight:(s as any).c?600:400}}>
+                          {s.l}
+                        </div>
                       ))}
-                      <select value={annoncesSort} onChange={e=>setAnnoncesSort(e.target.value as typeof annoncesSort)}
-                        style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>
-                        <option value="prix_asc">Prix ↑</option>
-                        <option value="prix_desc">Prix ↓</option>
-                        <option value="surface_desc">Surface ↓</option>
-                      </select>
+                      {/* Filters */}
+                      <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
+                        {(["","Maison","Appartement"] as const).map(f=>(
+                          <button key={f} onClick={()=>setAnnoncesTypeFilter(f)} style={{padding:"3px 9px",background:annoncesTypeFilter===f?C.accent:C.card,color:annoncesTypeFilter===f?(dark?"#080808":"#fff"):C.muted,border:`1px solid ${annoncesTypeFilter===f?C.accent:C.border}`,borderRadius:20,fontSize:11,fontWeight:annoncesTypeFilter===f?600:400,cursor:"pointer"}}>
+                            {f||"Tous"}
+                          </button>
+                        ))}
+                        <select value={annoncesSort} onChange={e=>setAnnoncesSort(e.target.value as typeof annoncesSort)}
+                          style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>
+                          <option value="prix_asc">Prix ↑</option>
+                          <option value="prix_desc">Prix ↓</option>
+                          <option value="surface_desc">Surface ↓</option>
+                        </select>
+                      </div>
                     </div>
+                  );
+                })()}
+              </>)}
+              {veilleMode==="analyser"&&(
+                <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"flex-end"}}>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Ville</label>
+                    <input value={analyserForm.ville} onChange={e=>setAnalyserForm(f=>({...f,ville:e.target.value}))}
+                      placeholder="Ex : Bordeaux" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:160}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
                   </div>
-                );
-              })()}
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Code postal</label>
+                    <input value={analyserForm.cp} onChange={e=>setAnalyserForm(f=>({...f,cp:e.target.value}))}
+                      placeholder="33000" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:90}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Type</label>
+                    <select value={analyserForm.type} onChange={e=>setAnalyserForm(f=>({...f,type:e.target.value as any}))}
+                      style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,cursor:"pointer"}}>
+                      <option value="Maison">Maison</option>
+                      <option value="Appartement">Appartement</option>
+                    </select>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Surface m²</label>
+                    <input value={analyserForm.surface} onChange={e=>setAnalyserForm(f=>({...f,surface:e.target.value}))}
+                      placeholder="120" type="number" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:90}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Terrain m²</label>
+                    <input value={analyserForm.terrain} onChange={e=>setAnalyserForm(f=>({...f,terrain:e.target.value}))}
+                      placeholder="600" type="number" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:90}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  </div>
+                  <button disabled={analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface} onClick={handleAnalyserAnnonce}
+                    style={{background:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.border:C.accent,color:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?"not-allowed":"pointer",alignSelf:"flex-end"}}>
+                    {analyserLoading?"...":"Identifier"}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Content */}
+            {veilleMode==="analyser"&&(
+            <div style={{flex:1,overflowY:"auto",padding:"24px 28px"}}>
+              {/* Description + photoUrls */}
+              <div style={{maxWidth:680,display:"flex",flexDirection:"column",gap:14}}>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Description de l'annonce</label>
+                  <textarea value={analyserForm.description} onChange={e=>setAnalyserForm(f=>({...f,description:e.target.value}))}
+                    placeholder="Collez ici le descriptif de l'annonce (adresse approximative, caractéristiques, quartier...)"
+                    rows={4}
+                    style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:13,resize:"vertical",fontFamily:"inherit",lineHeight:1.5}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>URLs des photos</label>
+                  <textarea value={analyserForm.photoUrls} onChange={e=>setAnalyserForm(f=>({...f,photoUrls:e.target.value}))}
+                    placeholder={"Collez les URLs des photos, une par ligne\nhttps://...photo1.jpg\nhttps://...photo2.jpg"}
+                    rows={3}
+                    style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:12,resize:"vertical",fontFamily:"monospace",lineHeight:1.5}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  <div style={{fontSize:11,color:C.muted}}>Les photos sont utilisées par l'IA pour identifier visuellement le bien (piscine, toiture, façade...).</div>
+                </div>
+              </div>
+              {analyserLoading&&(
+                <div style={{marginTop:32,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:18,fontStyle:"italic",color:C.text}}>Analyse IA en cours...</div>
+                  <div style={{fontSize:12,color:C.muted}}>Cadastre · DVF · Vision · ~15 secondes</div>
+                </div>
+              )}
+              {analyserResult&&!analyserResult.error&&analyserResult.matched&&(
+                <div style={{marginTop:24,maxWidth:680}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>Bien identifié</div>
+                    {analyserResult.method==="dvf"&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>DVF — haute fiabilité</span>}
+                    {analyserResult.method?.startsWith("pappers")&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>Cadastre — fiable</span>}
+                    {analyserResult.method==="dvf_vision"&&!analyserResult.low_confidence&&<span style={{fontSize:10,color:C.green,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — fiable</span>}
+                    {analyserResult.method==="dvf_vision"&&analyserResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                  </div>
+                  {analyserResult.lat&&analyserResult.lng&&analyserResult.method!=="dvf"&&(
+                    <div style={{marginBottom:14,borderRadius:10,overflow:"hidden",border:`1px solid ${C.border}`,position:"relative"}}>
+                      <img src={`https://data.geopf.fr/wms-r/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&FORMAT=image/jpeg&WIDTH=600&HEIGHT=240&SRS=EPSG:4326&BBOX=${analyserResult.lng-0.002},${analyserResult.lat-0.001},${analyserResult.lng+0.002},${analyserResult.lat+0.001}`}
+                        alt="Vue aérienne" style={{width:"100%",height:200,objectFit:"cover",display:"block"}}/>
+                      <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.45)",padding:"5px 10px",fontSize:11,color:"#fff",fontWeight:600}}>Vue aérienne IGN</div>
+                    </div>
+                  )}
+                  {analyserResult.parcel&&(
+                    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2}}>Parcelle {analyserResult.parcel.section}{analyserResult.parcel.numero}</div>
+                      <div style={{fontSize:12,color:C.muted}}>{analyserResult.parcel.contenance} m² · {analyserResult.parcel.commune}</div>
+                      {analyserResult.adresse&&<div style={{fontSize:12,color:C.text,marginTop:4,fontWeight:500}}>{analyserResult.adresse}</div>}
+                    </div>
+                  )}
+                  {analyserResult.pappers_immo?.proprietaires?.length>0?(
+                    <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>
+                        {analyserResult.pappers_immo.proprietaires.length>1?"Propriétaires":"Propriétaire"}
+                      </div>
+                      {analyserResult.pappers_immo.proprietaires.map((p:any,i:number)=>(
+                        <div key={i} style={{marginBottom:i<analyserResult.pappers_immo.proprietaires.length-1?6:0}}>
+                          <div style={{fontSize:14,fontWeight:700,color:C.text}}>{p.nom}</div>
+                          {p.siren&&<a href={`https://www.pappers.fr/entreprise/${p.siren}`} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:C.blue,textDecoration:"none",fontWeight:600}}>SIREN {p.siren} →</a>}
+                        </div>
+                      ))}
+                    </div>
+                  ):analyserResult.owner?.nom?(
+                    <div style={{background:C.green+"12",border:`1px solid ${C.green}35`,borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Propriétaire</div>
+                      <div style={{fontSize:14,fontWeight:700,color:C.text}}>{analyserResult.owner.nom}</div>
+                      {analyserResult.owner.entreprise&&analyserResult.owner.entreprise!==analyserResult.owner.nom&&<div style={{fontSize:12,color:C.muted,marginTop:1}}>{analyserResult.owner.entreprise}</div>}
+                      {analyserResult.owner.siren&&<a href={`https://www.pappers.fr/entreprise/${analyserResult.owner.siren}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-block",marginTop:4,fontSize:11,color:C.blue,textDecoration:"none",fontWeight:600}}>SIREN {analyserResult.owner.siren} →</a>}
+                    </div>
+                  ):(
+                    <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Propriétaire non identifié</div>
+                  )}
+                  <div style={{display:"flex",gap:8,marginTop:4}}>
+                    {analyserResult.geoportailUrl&&(
+                      <a href={analyserResult.geoportailUrl} target="_blank" rel="noopener noreferrer"
+                        style={{flex:1,display:"block",padding:"9px 0",background:C.blue+"15",border:`1px solid ${C.blue}30`,borderRadius:8,fontSize:12,color:C.blue,textAlign:"center",textDecoration:"none",fontWeight:600}}>
+                        Satellite IGN →
+                      </a>
+                    )}
+                    {analyserResult.parcel&&(
+                      <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent((analyserResult.parcel.commune||"")+" section "+analyserResult.parcel.section+" "+analyserResult.parcel.numero)}`} target="_blank" rel="noopener noreferrer"
+                        style={{flex:1,display:"block",padding:"9px 0",background:"#f0f7ff",border:"1px solid #bfdbfe",borderRadius:8,fontSize:12,color:"#1d4ed8",textAlign:"center",textDecoration:"none",fontWeight:600}}>
+                        Pappers Immo →
+                      </a>
+                    )}
+                  </div>
+                  {analyserResult.vision_score>0&&(
+                    <div style={{fontSize:11,color:C.muted,marginTop:10}}>Score correspondance : {analyserResult.vision_score}%{analyserResult.vision_reason&&<span style={{display:"block",marginTop:1}}>{analyserResult.vision_reason}</span>}</div>
+                  )}
+                  <button onClick={()=>setAnalyserResult(null)} style={{marginTop:12,background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 16px",fontSize:12,cursor:"pointer"}}>Réessayer</button>
+                </div>
+              )}
+              {analyserResult&&!analyserResult.error&&!analyserResult.matched&&(
+                <div style={{marginTop:24,maxWidth:680}}>
+                  <div style={{fontSize:12,color:C.amber,fontWeight:600,marginBottom:12}}>Bien non identifié avec certitude — comparez les candidats ci-dessous</div>
+                  {analyserResult.descriptor&&(
+                    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:C.text,lineHeight:1.6}}>
+                      <div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Descriptif IA</div>
+                      {[
+                        analyserResult.descriptor.piscine&&"Piscine",
+                        analyserResult.descriptor.tennis&&"Tennis",
+                        analyserResult.descriptor.etages&&`${analyserResult.descriptor.etages} étage(s)`,
+                        analyserResult.descriptor.toiture&&`Toit ${analyserResult.descriptor.toiture.replace(/_/g," ")}`,
+                        analyserResult.descriptor.facade_couleur&&`Façade ${analyserResult.descriptor.facade_couleur}`,
+                      ].filter(Boolean).join(" · ")}
+                      {analyserResult.descriptor.descriptif&&<div style={{color:C.muted,marginTop:2,fontStyle:"italic"}}>{analyserResult.descriptor.descriptif}</div>}
+                    </div>
+                  )}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+                    {(analyserResult.dvf_candidates||[]).map((c:any,i:number)=>{
+                      const ignUrl=c.lat&&c.lng?`https://data.geopf.fr/wms-r/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&FORMAT=image/jpeg&WIDTH=320&HEIGHT=160&SRS=EPSG:4326&BBOX=${c.lng-0.0018},${c.lat-0.001},${c.lng+0.0018},${c.lat+0.001}`:null;
+                      return (
+                        <div key={i} style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+                          {ignUrl&&(
+                            <div style={{position:"relative",height:130,background:C.surface}}>
+                              <img src={ignUrl} alt="Vue satellite" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{(e.target as HTMLImageElement).style.display="none";}}/>
+                              {c.vision_score>0&&<div style={{position:"absolute",top:6,right:6,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px"}}>Score {c.vision_score}%</div>}
+                            </div>
+                          )}
+                          <div style={{padding:"10px 12px"}}>
+                            <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:2}}>{c.adresse}</div>
+                            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>{c.surface_bati}m² bâti{c.surface_terrain>0?` · ${c.surface_terrain}m² terrain`:""}</div>
+                            <div style={{display:"flex",gap:8}}>
+                              {c.geoportailUrl&&<a href={c.geoportailUrl} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:C.blue,textDecoration:"none",fontWeight:600}}>Satellite →</a>}
+                              <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent(c.adresse)}`} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#1d4ed8",textDecoration:"none",fontWeight:600}}>Pappers →</a>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button onClick={()=>setAnalyserResult(null)} style={{marginTop:14,background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 16px",fontSize:12,cursor:"pointer"}}>Réessayer</button>
+                </div>
+              )}
+              {analyserResult?.error&&(
+                <div style={{marginTop:20,fontSize:13,color:C.red}}>{analyserResult.error}</div>
+              )}
+              {!analyserResult&&!analyserLoading&&(
+                <div style={{marginTop:40,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:20,fontStyle:"italic",color:C.text}}>Collez les infos de l'annonce</div>
+                  <div style={{fontSize:13,color:C.muted,textAlign:"center",maxWidth:420}}>Ville, surface, description et photos — l'IA identifie le bien, la parcelle et le propriétaire</div>
+                </div>
+              )}
+            </div>
+            )}
+            {veilleMode==="recherche"&&(
             <div style={{flex:1,overflowY:"auto",padding:"24px 28px"}}>
               {annoncesLoading?(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:200}}>
@@ -3205,6 +3456,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                 );
               })()}
             </div>
+            )}
           </div>
         )}
 

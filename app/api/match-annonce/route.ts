@@ -2,21 +2,36 @@ import { NextRequest, NextResponse } from "next/server";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+// WFS Géoplateforme — remplace l'API Apicarto (retournait des résultats erronés)
+// EPSG:4326 bbox = south,west,north,east
 async function getIGNParcels(lat: number, lng: number): Promise<any[]> {
   const d = 0.006; // ~600m
-  const bbox = {
-    type: "Polygon",
-    coordinates: [[[lng-d,lat-d],[lng+d,lat-d],[lng+d,lat+d],[lng-d,lat+d],[lng-d,lat-d]]]
-  };
+  const bbox = `${lat-d},${lng-d},${lat+d},${lng+d}`;
   try {
     const res = await fetch(
-      `https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify(bbox))}&_limit=80`,
+      `https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle&SRSNAME=EPSG:4326&BBOX=${bbox}&OUTPUTFORMAT=application/json&COUNT=80`,
       { signal: AbortSignal.timeout(12000) }
     );
     if (!res.ok) return [];
     const data = await res.json();
     return data.features || [];
   } catch { return []; }
+}
+
+async function getParcelAtPoint(lat: number, lng: number): Promise<{ section: string; numero: string; contenance: number; commune: string } | null> {
+  const eps = 0.0002;
+  const bbox = `${lat-eps},${lng-eps},${lat+eps},${lng+eps}`;
+  try {
+    const res = await fetch(
+      `https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle&SRSNAME=EPSG:4326&BBOX=${bbox}&OUTPUTFORMAT=application/json&COUNT=1`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return null;
+    const pd = await res.json();
+    const f = pd.features?.[0];
+    if (!f) return null;
+    return { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
+  } catch { return null; }
 }
 
 function getRing(feature: any): number[][] {
@@ -97,7 +112,7 @@ async function extractVisualDescriptor(photosB64: string[], surface: number, typ
   for (const b64 of photosB64.slice(0, 3)) {
     content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } });
   }
-  content.push({ type: "text", text: `Photos d'une annonce : ${type} ~${surface}m². Décris précisément ce bien. JSON UNIQUEMENT :
+  content.push({ type: "text", text: `Photos d'une annonce : ${type} ~${surface}m². Décris précisément ce bien ET extrait tous les indices géographiques visibles. JSON UNIQUEMENT :
 {
   "piscine": true/false,
   "piscine_forme": "rectangulaire|haricot|infinity|debordement|autre|null",
@@ -108,9 +123,15 @@ async function extractVisualDescriptor(photosB64: string[], surface: number, typ
   "volets": "bois_brun|bois_vert|blanc|bleu|aucun",
   "vegetation": "pins|palmiers|oliviers|garrigue|pelouse|mixte",
   "vue_mer": true/false,
+  "vue_golf": true/false,
+  "vue_vignes": true/false,
   "garage": true/false,
   "portail": true/false,
-  "style": "provencal|contemporain|bastide|mas|moderne",
+  "style": "provencal|contemporain|bastide|mas|moderne|haussmannien|années70",
+  "rue_visible": "texte de la plaque de rue ou numéro si visible, sinon null",
+  "enseigne_visible": "nom de commerce ou enseigne visible dans les photos, sinon null",
+  "quartier_type": "centre_ville|periurbain|rural|littoral|montagne|vignoble",
+  "indices_geo": "liste en 1 phrase des indices géographiques visibles (vue, relief, végétation locale, architecture typique de région)",
   "descriptif": "2-3 phrases distinctives pour retrouver ce bien depuis le ciel ou la rue"
 }` });
 
@@ -617,16 +638,10 @@ export async function POST(req: NextRequest) {
   }
 
   if (dvfMatch && dvfMatch.confidence === "high") {
-    const [owner, parcelRes] = await Promise.all([
+    const [owner, parcel] = await Promise.all([
       findOwner(dvfMatch.adresse + ", " + dvfMatch.commune, cp, ville, pappersKey, dvfMatch.lat, dvfMatch.lng, pappersImmoKey),
-      fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[dvfMatch.lng,dvfMatch.lat]}))}`, { signal: AbortSignal.timeout(8000) }),
+      getParcelAtPoint(dvfMatch.lat, dvfMatch.lng),
     ]);
-    let parcel = null;
-    if (parcelRes.ok) {
-      const pd = await parcelRes.json();
-      const f = pd.features?.[0];
-      if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
-    }
     // Géoportail centré sur les VRAIES coordonnées DVF (pas le centroïde flou)
     const dvfGeoportailUrl = dvfMatch.lat
       ? `https://www.geoportail.gouv.fr/carte?c=${dvfMatch.lng},${dvfMatch.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`
@@ -718,16 +733,11 @@ export async function POST(req: NextRequest) {
   if (chosenPappers) {
     const geoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenPappers.lng},${chosenPappers.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
     // Lookup propriétaire par numéro de parcelle exact (plus précis que lat/lng radius)
-    const pappersResult = await pappersImmoByParcelId(chosenPappers.numero, pappersImmoKey);
+    const [pappersResult, parcel] = await Promise.all([
+      pappersImmoByParcelId(chosenPappers.numero, pappersImmoKey),
+      getParcelAtPoint(chosenPappers.lat, chosenPappers.lng),
+    ]);
     const owner = pappersResult?.owner ?? await findOwner(chosenPappers.adresse, cp, ville, pappersKey);
-    // Parcelle IGN depuis coordonnées BAN (précises car adresse cadastrale)
-    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenPappers.lng,chosenPappers.lat]}))}`, { signal: AbortSignal.timeout(8000) });
-    let parcel = null;
-    if (parcelRes.ok) {
-      const pd = await parcelRes.json();
-      const f = pd.features?.[0];
-      if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
-    }
     return NextResponse.json({
       method: pappersVisionScore >= 52 ? "pappers_vision_high" : "pappers_vision",
       adresse: chosenPappers.adresse,
@@ -802,15 +812,11 @@ export async function POST(req: NextRequest) {
 
   if (chosenDvf) {
     const dvfGeoUrl = `https://www.geoportail.gouv.fr/carte?c=${chosenDvf.lng},${chosenDvf.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
-    const pappersBasic = pappersImmoKey ? await pappersImmoBasic(chosenDvf.lat, chosenDvf.lng, pappersImmoKey) : null;
+    const [pappersBasic, parcel] = await Promise.all([
+      pappersImmoKey ? pappersImmoBasic(chosenDvf.lat, chosenDvf.lng, pappersImmoKey) : Promise.resolve(null),
+      getParcelAtPoint(chosenDvf.lat, chosenDvf.lng),
+    ]);
     const owner = pappersBasic?.owner ?? await findOwner(chosenDvf.adresse + ", " + chosenDvf.commune, cp, ville, pappersKey);
-    const parcelRes = await fetch(`https://apicarto.ign.fr/api/cadastre/parcelle?geom=${encodeURIComponent(JSON.stringify({type:"Point",coordinates:[chosenDvf.lng,chosenDvf.lat]}))}`, { signal: AbortSignal.timeout(8000) });
-    let parcel = null;
-    if (parcelRes.ok) {
-      const pd = await parcelRes.json();
-      const f = pd.features?.[0];
-      if (f) parcel = { section: f.properties.section, numero: f.properties.numero, contenance: f.properties.contenance, commune: f.properties.nom_com };
-    }
     const surfaceWarning = surface > 0 && chosenDvf.surface_bati > 0
       && Math.abs(chosenDvf.surface_bati - surface) / surface > 0.25
       ? `Surface DVF (${chosenDvf.surface_bati}m²) différente de l'annonce (${surface}m²) — à vérifier`
