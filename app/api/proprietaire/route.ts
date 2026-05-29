@@ -193,6 +193,30 @@ async function tryVision(lat: string, lng: string): Promise<string | null> {
   } catch { return null; }
 }
 
+// ── Pappers Immobilier (Fichiers Fonciers) ────────────────────────────────────
+
+async function pappersImmoBasic(lat: string, lng: string, apiKey: string): Promise<{ nom: string; source: string } | null> {
+  try {
+    const url = `https://api-immobilier.pappers.fr/v1/parcelles?latitude=${lat}&longitude=${lng}&distance=20&bases=proprietaires&champs_supplementaires=proprietaires.personnes_physiques&par_page=1`;
+    const r = await fetch(url, { headers: { "api-key": apiKey }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const p = data.resultats?.[0];
+    if (!p) return null;
+    for (const rp of (p.proprietaires || [])) {
+      const pps: any[] = rp.personnes_physiques || [];
+      if (pps.length > 0) {
+        const pp = pps[0];
+        const nom = pp.nom_complet || [pp.prenoms, pp.nom_usage || pp.nom_patronymique].filter(Boolean).join(" ").trim();
+        if (nom) return { nom, source: "pappers_immo" };
+      } else if (rp.nom_entreprise) {
+        return { nom: rp.nom_entreprise, source: "pappers_immo" };
+      }
+    }
+  } catch {}
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const lat = searchParams.get("lat");
@@ -200,6 +224,35 @@ export async function GET(req: NextRequest) {
   const adresse = searchParams.get("adresse") || "";
 
   if (!lat || !lng) return NextResponse.json({ error: "lat/lng requis" }, { status: 400 });
+
+  // ── Priorité absolue : Pappers Immo (Fichiers Fonciers DGFIP) ────────────
+  const pappersImmoKey = process.env.PAPPERS_IMMO_API_KEY || "";
+  if (pappersImmoKey) {
+    const pappersResult = await pappersImmoBasic(lat, lng, pappersImmoKey);
+    if (pappersResult) {
+      const cpMatch = adresse.match(/\b(3[0-9]{4})\b/);
+      const cp = cpMatch?.[1] || "33000";
+      // Cadastre en parallèle pour la parcelle
+      const eps = 0.0002;
+      const wfsBbox = `${(parseFloat(lat)-eps).toFixed(6)},${(parseFloat(lng)-eps).toFixed(6)},${(parseFloat(lat)+eps).toFixed(6)},${(parseFloat(lng)+eps).toFixed(6)}`;
+      let parcelles: any[] = [];
+      try {
+        const cr = await fetch(`https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle&SRSNAME=EPSG:4326&BBOX=${wfsBbox}&OUTPUTFORMAT=application/json&COUNT=3`, { signal: AbortSignal.timeout(6000) });
+        if (cr.ok) { const d = await cr.json(); parcelles = (d.features || []).map((f: any) => ({ section: f.properties?.section, numero: f.properties?.numero, contenance: f.properties?.contenance, code_insee: f.properties?.code_insee })); }
+      } catch {}
+      const nameParts = pappersResult.nom.split(" ");
+      return NextResponse.json({
+        parcelles, entreprises: [],
+        proprietaire_nom: pappersResult.nom,
+        proprietaire_prenom: nameParts.length > 1 ? nameParts[nameParts.length - 1] : "",
+        civilite: "",
+        proprietaire_source: "pappers_immo",
+        vision_enabled: !!process.env.GOOGLE_STREETVIEW_KEY,
+        pagesBlanchesUrl: `https://www.pagesjaunes.fr/pagesblanches/recherche?quoiqui=&ou=${encodeURIComponent(adresse)}`,
+        annuaireUrl: `https://www.118712.fr/annuaire/personne?ou=${encodeURIComponent(adresse)}`,
+      });
+    }
+  }
 
   // Extract postal code from address for BODACC
   const cpMatch = adresse.match(/\b(3[0-9]{4})\b/);

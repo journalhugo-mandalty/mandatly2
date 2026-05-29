@@ -1609,7 +1609,7 @@ export default function App() {
                           {metaLine&&<span style={{fontSize:10,color:C.muted}}>{metaLine}</span>}
                           {p.proprietaire_nom&&p.proprietaire_source&&p.proprietaire_source!=="inconnu"&&(
                             <span style={{fontSize:9,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:3,padding:"0 4px",lineHeight:"16px"}}>
-                              {p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="vision-ia"?"Vision IA":"Sirene"}
+                              {p.proprietaire_source==="pappers_immo"?"Pappers Immo":p.proprietaire_source==="sci+dirigeant"?"SCI":p.proprietaire_source==="vision-ia"?"Vision IA":"Sirene"}
                             </span>
                           )}
                         </div>
@@ -1823,7 +1823,7 @@ export default function App() {
                           <>
                             <span style={{fontSize:12,fontWeight:700,color:C.text}}>{selProspect.proprietaire_nom}</span>
                             <span style={{fontSize:10,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>
-                              {selProspect.proprietaire_source==="sci+dirigeant"?"SCI":selProspect.proprietaire_source==="vision-ia"?"Vision IA":selProspect.proprietaire_source==="bodacc"?"BODACC":"Sirene"}
+                              {selProspect.proprietaire_source==="pappers_immo"?"Pappers Immo":selProspect.proprietaire_source==="sci+dirigeant"?"SCI":selProspect.proprietaire_source==="vision-ia"?"Vision IA":selProspect.proprietaire_source==="bodacc"?"BODACC":"Sirene"}
                             </span>
                           </>
                         ):(
@@ -2692,7 +2692,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                         <span style={{fontSize:12,fontWeight:500,color:C.text,background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,padding:"2px 8px"}}>{courrier.prospect.proprietaire_nom}</span>
                       )}
                       {courrier.prospect.proprietaire_source&&(
-                        <span style={{fontSize:10,color:C.muted}}>via {courrier.prospect.proprietaire_source==="sci+dirigeant"?"SCI":courrier.prospect.proprietaire_source==="sirene+dirigeant"?"Sirene":"Sirene"}</span>
+                        <span style={{fontSize:10,color:C.muted}}>via {courrier.prospect.proprietaire_source==="pappers_immo"?"Pappers Immo":courrier.prospect.proprietaire_source==="sci+dirigeant"?"SCI":courrier.prospect.proprietaire_source==="vision-ia"?"Vision IA":courrier.prospect.proprietaire_source==="bodacc"?"BODACC":"Sirene"}</span>
                       )}
                     </div>
                   </div>
