@@ -255,12 +255,12 @@ export default function App() {
   const [radarView, setRadarView] = useState<"cards"|"map">("cards");
   const [dpeMapLoading, setDpeMapLoading] = useState(false);
   const [radarSelected, setRadarSelected] = useState<any>(null);
-  const [radarLayers, setRadarLayers] = useState({ parcelles: true, ventes: false, proprietaires: false, dpe: true });
+  const [radarLayers, setRadarLayers] = useState({ parcelles: true, ventes: false, proprietaires: true, dpe: true });
   const [radarParcelPanel, setRadarParcelPanel] = useState<{
     properties: any; centroid: [number,number]; matching: any[];
     address: string|null; owner: any|null; ownerLoading: boolean;
   }|null>(null);
-  const [parcelTab, setParcelTab] = useState<"ventes"|"proprietaires"|"dpe">("proprietaires");
+  const [parcelTab, setParcelTab] = useState<"ventes"|"proprietaires"|"dpe"|"batiments"|"occupants"|"urbanisme">("ventes");
   const [radarBasket, setRadarBasket] = useState<Record<string,{prospect:any;liked:boolean;dateSent?:string}>>(() => {
     if(typeof window==="undefined") return {};
     try{return JSON.parse(localStorage.getItem("m_radar_basket")||"{}");}catch{return {};}
@@ -1008,7 +1008,7 @@ export default function App() {
             setRadarSelected(null);
             setRadarLetter("");
             setRadarLetterTemplate("prospection");
-            setParcelTab("proprietaires");
+            setParcelTab("ventes");
             setRadarParcelPanel({properties,centroid,matching:matchingProspects,address:null,owner:null,ownerLoading:true});
             const [lat,lng]=centroid;
             let resolvedAddress:string|null=null;
@@ -1035,19 +1035,19 @@ export default function App() {
           const firstWithCoords=radarProspects.find(p=>p.lat&&p.lng);
           const radarMapCenter:[number,number]=firstWithCoords?[firstWithCoords.lat as number,firstWithCoords.lng as number]:[44.837,-0.579];
 
-          // Layer config
+          // Layer config — couleurs calquées sur Pappers Immo
           const LAYER_CFG=[
-            {key:"parcelles",label:"Parcelles cadastrales",color:"#94A3B8",desc:"Polygones IGN officiels"},
-            {key:"ventes",    label:"Ventes DVF",          color:"#F97316",desc:"Transactions immobilières"},
-            {key:"proprietaires",label:"Propriétaires",   color:"#6366F1",desc:"Propriétaires identifiés"},
-            {key:"dpe",       label:"DPE récents",         color:"#10B981",desc:"Signaux de vente"},
+            {key:"parcelles",    label:"Parcelles",       color:"#94A3B8", icon:"◇"},
+            {key:"proprietaires",label:"Propriétaires",   color:"#22C55E", icon:"◇"},
+            {key:"ventes",       label:"Ventes",          color:"#7C3AED", icon:"◇"},
+            {key:"dpe",          label:"DPE récents",     color:"#F97316", icon:"◇"},
           ] as const;
 
           const EyeOpen = ()=>(
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           );
           const EyeOff = ()=>(
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
           );
 
           const rightOpen = !!(radarSelected || radarParcelPanel);
@@ -1056,24 +1056,37 @@ export default function App() {
           <div style={{flex:1,display:"flex",overflow:"hidden"}}>
 
             {/* LEFT: calques + config + panier */}
-            <div style={{width:220,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card}}>
+            <div style={{width:230,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card}}>
+
+              {/* Header Configurer la vue */}
+              <div style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,flexShrink:0,display:"flex",gap:6}}>
+                <button style={{flex:1,background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:6,padding:"6px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Configurer la vue</button>
+                <button style={{flex:1,background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",fontSize:10,fontWeight:600,cursor:"pointer"}}>Recherche avancée</button>
+              </div>
+
               {/* Calques */}
-              <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
-                <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:10}}>Calques</div>
+              <div style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:8}}>Calques</div>
                 {LAYER_CFG.map(l=>{
                   const on=radarLayers[l.key];
                   return(
-                  <div key={l.key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}
+                  <div key={l.key} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 0",borderBottom:`1px solid rgba(255,255,255,0.04)`,cursor:"pointer"}}
                     onClick={()=>setRadarLayers(prev=>({...prev,[l.key]:!prev[l.key]}))}>
-                    <div style={{width:10,height:10,borderRadius:2,background:l.color,opacity:on?1:0.25,flexShrink:0,transition:"opacity 0.15s"}}/>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:11,fontWeight:500,color:on?C.text:C.muted,transition:"color 0.15s"}}>{l.label}</div>
-                    </div>
-                    <div style={{color:on?C.text:C.border,flexShrink:0,transition:"color 0.15s"}}>
-                      {on?<EyeOpen/>:<EyeOff/>}
+                    {/* Diamond icon — exact Pappers style */}
+                    <svg width="12" height="12" viewBox="0 0 12 12" style={{flexShrink:0,opacity:on?1:0.25,transition:"opacity 0.15s"}}>
+                      <path d="M6 1 L11 6 L6 11 L1 6 Z" fill={l.color} stroke={l.color} strokeWidth="0.5"/>
+                    </svg>
+                    <div style={{flex:1,fontSize:11,fontWeight:500,color:on?C.text:C.muted,transition:"color 0.15s"}}>{l.label}</div>
+                    <div style={{display:"flex",gap:3,alignItems:"center"}}>
+                      <div style={{color:on?"rgba(255,255,255,0.5)":"rgba(255,255,255,0.2)",cursor:"pointer",padding:"1px",transition:"color 0.15s"}}>
+                        {on?<EyeOpen/>:<EyeOff/>}
+                      </div>
                     </div>
                   </div>
                 );})}
+                <button onClick={()=>setRadarLayers({parcelles:true,ventes:false,proprietaires:true,dpe:true})} style={{marginTop:8,width:"100%",background:"none",border:"none",color:C.muted,fontSize:9,cursor:"pointer",textAlign:"left",padding:0,fontFamily:"inherit"}}>
+                  Réinitialiser tous les filtres
+                </button>
               </div>
 
               {/* Secteur */}
@@ -1197,14 +1210,20 @@ export default function App() {
                           </div>
                         ))}
                       </div>
-                      {/* Onglets style Pappers */}
-                      <div style={{display:"flex",gap:0,marginLeft:-2,marginRight:-2}}>
+                      {/* Onglets style Pappers Immo */}
+                      <div style={{display:"flex",gap:0,overflowX:"auto",marginLeft:-2,marginRight:-2,scrollbarWidth:"none"}}>
                         {([
-                          ["proprietaires","Propriétaires"],
-                          ["ventes",`Ventes (${dvfHits.length})`],
-                          ...(dpeHits.length?[["dpe",`DPE (${dpeHits.length})`] as [string,string]]:[]),
-                        ] as [string,string][]).map(([id,lbl])=>(
-                          <button key={id} onClick={()=>setParcelTab(id as any)} style={{flex:1,padding:"7px 6px",border:"none",borderBottom:parcelTab===id?`2px solid #3B82F6`:`2px solid transparent`,background:"none",color:parcelTab===id?"#3B82F6":C.muted,fontSize:11,fontWeight:parcelTab===id?700:500,cursor:"pointer",transition:"all 0.12s",textAlign:"center"}}>{lbl}</button>
+                          ["ventes",`Ventes (${dvfHits.length})`,false],
+                          ["proprietaires",`Propriétaires (${ownerName?1:0})`,false],
+                          ["dpe",`DPE (${dpeHits.length})`,false],
+                          ["batiments","Bâtiments",true],
+                          ["occupants","Occupants",true],
+                          ["urbanisme","Urbanisme",true],
+                        ] as [string,string,boolean][]).map(([id,lbl,locked])=>(
+                          <button key={id} onClick={()=>!locked&&setParcelTab(id as any)} style={{flexShrink:0,padding:"7px 8px",border:"none",borderBottom:parcelTab===id?`2px solid #3B82F6`:`2px solid transparent`,background:"none",color:locked?"rgba(255,255,255,0.2)":parcelTab===id?"#3B82F6":C.muted,fontSize:10,fontWeight:parcelTab===id?700:500,cursor:locked?"default":"pointer",transition:"all 0.12s",textAlign:"center",display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>
+                            {lbl}
+                            {locked&&<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V11a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm3 8H9V6a3 3 0 0 1 6 0v3z"/></svg>}
+                          </button>
                         ))}
                       </div>
                     </div>
