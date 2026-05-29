@@ -597,6 +597,101 @@ async function pappersImmoByParcelId(numero: string, apiKey: string): Promise<Pa
   } catch { return null; }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// AGENTS SPÉCIALISÉS PHOTO AÉRIENNE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Agent 1 — Détecte le type de vue (aérienne/drone/satellite vs façade vs intérieur)
+async function detectPhotoType(photoB64: string, anthropicKey: string): Promise<"aerial"|"street"|"interior"> {
+  try {
+    const cr = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001", max_tokens: 10,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: photoB64 } },
+          { type: "text", text: 'Type de vue de cette photo immobilière ? Un seul mot : "aerial" (vue du ciel/drone/satellite), "street" (façade/extérieur/rue), ou "interior" (intérieur).' },
+        ]}],
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!cr.ok) return "street";
+    const text = ((await cr.json()).content?.[0]?.text || "").trim().toLowerCase();
+    if (text.includes("aerial")) return "aerial";
+    if (text.includes("interior")) return "interior";
+    return "street";
+  } catch { return "street"; }
+}
+
+// Agent 2 — Géolocalise directement depuis une photo aérienne
+// Compare avec une vue IGN large de référence pour trouver les coordonnées précises
+async function geolocateFromAerial(
+  photoB64: string, ville: string, approxLat: number, approxLng: number, anthropicKey: string
+): Promise<{ lat: number; lng: number; confidence: number; reason: string } | null> {
+  try {
+    const refAerial = await getIGNAerial(approxLat, approxLng, 700);
+    const content: any[] = [
+      { type: "text", text: `IMAGE 1 — photo satellite/drone de l'annonce à ${ville} :` },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: photoB64 } },
+    ];
+    if (refAerial) {
+      content.push({ type: "text", text: `IMAGE 2 — vue satellite IGN de référence centrée sur ${approxLat.toFixed(4)},${approxLng.toFixed(4)} (~700m de rayon). Utilise-la pour repérer la position exacte du bien de l'IMAGE 1.` });
+      content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: refAerial } });
+    }
+    content.push({ type: "text", text: `À partir des éléments visibles (routes, littoral, végétation, forme parcelle, piscine, bâtiments voisins), estime les coordonnées GPS précises du centre du bien.
+JSON UNIQUEMENT : {"lat": N.NNNNNN, "lng": N.NNNNNN, "confidence": 0-100, "reason": "indices utilisés ≤20 mots"}
+Si impossible à localiser : {"lat": null, "lng": null, "confidence": 0, "reason": "indices insuffisants"}` });
+
+    const cr = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 150, messages: [{ role: "user", content }] }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!cr.ok) return null;
+    const txt = ((await cr.json()).content?.[0]?.text || "");
+    const start = txt.indexOf("{"), end = txt.lastIndexOf("}");
+    if (start < 0) return null;
+    const p = JSON.parse(txt.slice(start, end+1));
+    if (!p.lat || !p.lng || p.confidence < 55) return null;
+    return { lat: Number(p.lat), lng: Number(p.lng), confidence: p.confidence, reason: p.reason || "" };
+  } catch { return null; }
+}
+
+// Agent 3 — Comparaison directe vue aérienne annonce vs satellite IGN candidat
+// Bypasse l'extraction de descripteur : comparaison image-à-image directe
+async function compareAerialDirect(
+  listingB64: string, candidateAerialB64: string, adresse: string, anthropicKey: string
+): Promise<{ score: number; reason: string }> {
+  const content: any[] = [
+    { type: "text", text: "IMAGE 1 — vue satellite/drone de l'annonce immobilière :" },
+    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: listingB64 } },
+    { type: "text", text: `IMAGE 2 — vue satellite IGN officielle du candidat "${adresse}" :` },
+    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: candidateAerialB64 } },
+    { type: "text", text: `Ces deux vues satellite montrent-elles le même bien immobilier ?
+Compare point par point : forme/orientation du bâtiment principal, piscine (présence, forme, position relative), couleur/forme du toit, végétation immédiate (pins, oliviers, haies), parcelles voisines, accès/voie.
+score≥70 = très probable même bien. score<40 = clairement différent.
+JSON UNIQUEMENT : {"score": N, "reason": "différences ou concordances clés ≤20 mots"}` },
+  ];
+  try {
+    const cr = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 100, messages: [{ role: "user", content }] }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!cr.ok) return { score: 0, reason: "erreur API" };
+    const txt = ((await cr.json()).content?.[0]?.text || "");
+    const start = txt.indexOf("{"), end = txt.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      const p = JSON.parse(txt.slice(start, end+1));
+      return { score: p.score ?? 0, reason: (p.reason || "").slice(0, 80) };
+    }
+  } catch {}
+  return { score: 0, reason: "erreur comparaison" };
+}
+
 // ── Route ────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -672,6 +767,80 @@ export async function POST(req: NextRequest) {
   const googleKey = process.env.GOOGLE_STREETVIEW_KEY || "";
   const allPhotosB64: string[] = listingB64 ? [listingB64] : [];
   let descriptorUsed: any = null;
+
+  // ── 1b. Branche aérienne — détection + 2 agents spécialisés ─────────────────
+  // Si la photo est vue du ciel : pipeline dédié, bypass descriptor street-level
+  if (listingB64) {
+    const photoType = await detectPhotoType(listingB64, anthropicKey);
+
+    if (photoType === "aerial") {
+      // Agent 2 : tentative géolocalisation directe (vue IGN large de référence)
+      const geo = await geolocateFromAerial(listingB64, ville, lat, lng, anthropicKey);
+      if (geo) {
+        const [pappersBasic, parcel, adresseGeo] = await Promise.all([
+          pappersImmoKey ? pappersImmoBasic(geo.lat, geo.lng, pappersImmoKey) : Promise.resolve(null),
+          getParcelAtPoint(geo.lat, geo.lng),
+          reverseGeocode(geo.lat, geo.lng),
+        ]);
+        const owner = pappersBasic?.owner
+          ?? await findOwner(adresseGeo || ville, cp, ville, pappersKey, geo.lat, geo.lng, pappersImmoKey);
+        const geoUrl = `https://www.geoportail.gouv.fr/carte?c=${geo.lng},${geo.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
+        return NextResponse.json({
+          method: "aerial_geolocated",
+          adresse: adresseGeo || `~${ville}`,
+          lat: geo.lat, lng: geo.lng,
+          parcel, owner, matched: true,
+          vision_score: geo.confidence, vision_reason: geo.reason,
+          low_confidence: geo.confidence < 75,
+          geoportailUrl: geoUrl,
+          pappers_immo: pappersBasic ? { proprietaires: pappersBasic.proprietaires, adresse: pappersBasic.adresse_pappers } : null,
+        });
+      }
+
+      // Agent 3 : comparaison directe aérienne vs candidats Pappers (si géoloc échoue)
+      if (pappersImmoKey && inseeCode) {
+        const rawCandidates = await pappersImmoSearchCandidates(inseeCode, surface, pappersImmoKey, 8);
+        const geocoded = (await Promise.all(
+          rawCandidates.map(async c => { const g = await geocodeAddress(c.adresse); return g ? { ...c, ...g } : null; })
+        )).filter(Boolean) as Array<typeof rawCandidates[0] & { lat: number; lng: number }>;
+
+        if (geocoded.length > 0) {
+          const scored = await Promise.all(
+            geocoded.map(async c => {
+              const ign = await getIGNAerial(c.lat, c.lng, 145);
+              if (!ign) return { ...c, score: 0, reason: "pas de satellite" };
+              const res = await compareAerialDirect(listingB64!, ign, c.adresse, anthropicKey);
+              return { ...c, score: res.score, reason: res.reason };
+            })
+          );
+          scored.sort((a, b) => b.score - a.score);
+          const best = scored[0];
+
+          if (best?.score >= 38) {
+            const geoUrl = `https://www.geoportail.gouv.fr/carte?c=${best.lng},${best.lat}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)&l1=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`;
+            const [pappersResult, parcel] = await Promise.all([
+              pappersImmoByParcelId(best.numero, pappersImmoKey),
+              getParcelAtPoint(best.lat, best.lng),
+            ]);
+            const owner = pappersResult?.owner
+              ?? await findOwner(best.adresse, cp, ville, pappersKey, best.lat, best.lng, pappersImmoKey);
+            return NextResponse.json({
+              method: "aerial_comparison",
+              adresse: best.adresse,
+              lat: best.lat, lng: best.lng,
+              parcel, owner, matched: true,
+              vision_score: best.score, vision_reason: best.reason,
+              vision_used: true,
+              low_confidence: best.score < 65,
+              geoportailUrl: geoUrl,
+              pappers_immo: pappersResult ? { proprietaires: pappersResult.proprietaires, adresse: pappersResult.adresse_pappers } : null,
+            });
+          }
+        }
+      }
+      // Aucune des deux approches n'a abouti → fall-through vers DVF standard
+    }
+  }
 
   // ── 2. Pappers Immobilier — recherche cadastrale par commune + surface ────────
   // Source primaire : adresses officielles Fichiers Fonciers + numéro de parcelle exact
