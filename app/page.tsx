@@ -230,6 +230,9 @@ export default function App() {
   const [analyserResult, setAnalyserResult] = useState<any>(null);
   const [analyserFullDossier, setAnalyserFullDossier] = useState<any>(null);
   const [analyserFullLoading, setAnalyserFullLoading] = useState(false);
+  const [scrapeUrl, setScrapeUrl] = useState("");
+  const [scrapeLoading, setScrapeLoading] = useState(false);
+  const [scrapeError, setScrapeError] = useState("");
   // Email modal
   type EmailModal = {to:string; sujet:string; corps:string; loading:boolean; sending?:boolean; sent?:boolean; sendError?:string};
   const [emailModal, setEmailModal] = useState<EmailModal|null>(null);
@@ -664,6 +667,31 @@ export default function App() {
     }
     setAnalyserLoading(false);
   }, [analyserForm]);
+
+  const handleScrapeAnnonce = useCallback(async () => {
+    if (!scrapeUrl.trim() || scrapeLoading) return;
+    setScrapeLoading(true); setScrapeError(""); setAnalyserResult(null);
+    try {
+      const r = await fetch("/api/scrape-annonce", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ url: scrapeUrl.trim() }),
+      });
+      const d = await r.json();
+      if (d.error) { setScrapeError(d.error); setScrapeLoading(false); return; }
+      setAnalyserForm(f => ({
+        ...f,
+        ville: d.ville || f.ville,
+        cp: d.cp || f.cp,
+        type: (d.type === "Appartement" ? "Appartement" : "Maison") as "Maison"|"Appartement",
+        surface: d.surface ? String(d.surface) : f.surface,
+        terrain: d.terrain ? String(d.terrain) : f.terrain,
+        description: [d.description, d.indices_localisation, d.adresse_indicative].filter(Boolean).join("\n\n") || f.description,
+        photoUrls: (d.photos || []).slice(0, 5).join("\n") || f.photoUrls,
+      }));
+    } catch { setScrapeError("Erreur réseau"); }
+    setScrapeLoading(false);
+  }, [scrapeUrl, scrapeLoading]);
 
   // ── Cache Pappers Immo (localStorage, TTL 30 jours) ─────────────────────
   const PAPPERS_TTL = 180 * 24 * 60 * 60 * 1000;
@@ -3067,6 +3095,30 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                 })()}
               </>)}
               {veilleMode==="analyser"&&(
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {/* URL auto-extract */}
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <div style={{flex:1,display:"flex",alignItems:"center",gap:0,background:C.card,border:`1px solid ${scrapeError?C.red:C.border}`,borderRadius:8,overflow:"hidden"}}>
+                    <span style={{padding:"0 10px",fontSize:12,color:C.muted,whiteSpace:"nowrap",borderRight:`1px solid ${C.border}`}}>URL annonce</span>
+                    <input
+                      value={scrapeUrl}
+                      onChange={e=>{setScrapeUrl(e.target.value);setScrapeError("");}}
+                      onKeyDown={e=>e.key==="Enter"&&handleScrapeAnnonce()}
+                      placeholder="https://www.seloger.com/... ou leboncoin, pap, bienici..."
+                      style={{flex:1,background:"transparent",border:"none",color:C.text,padding:"8px 12px",fontSize:12,outline:"none",fontFamily:"monospace"}}
+                    />
+                  </div>
+                  <button
+                    disabled={!scrapeUrl.trim()||scrapeLoading}
+                    onClick={handleScrapeAnnonce}
+                    style={{padding:"8px 16px",background:scrapeLoading||!scrapeUrl.trim()?C.border:C.accent,color:scrapeLoading||!scrapeUrl.trim()?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:scrapeLoading||!scrapeUrl.trim()?"not-allowed":"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                    {scrapeLoading?(
+                      <span style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:"currentColor",animation:"pulse 1s infinite"}}/>Extraction...</span>
+                    ):"Extraire l'annonce"}
+                  </button>
+                </div>
+                {scrapeError&&<div style={{fontSize:11,color:C.red,padding:"6px 10px",background:C.red+"12",borderRadius:6,border:`1px solid ${C.red}30`}}>{scrapeError}</div>}
+                <div style={{fontSize:10,color:C.muted}}>Ou remplissez manuellement :</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"flex-end"}}>
                   <div style={{display:"flex",flexDirection:"column",gap:4}}>
                     <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Ville</label>
@@ -3100,6 +3152,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                     style={{background:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.border:C.accent,color:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?"not-allowed":"pointer",alignSelf:"flex-end"}}>
                     {analyserLoading?"...":"Identifier"}
                   </button>
+                </div>
                 </div>
               )}
             </div>
