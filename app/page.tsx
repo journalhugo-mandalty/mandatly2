@@ -68,6 +68,7 @@ async function lancerEstimation(type: string, surface: number, adresse: string, 
 }
 
 type CrmStatus = "nouveau"|"courrier_pret"|"envoye"|"relance_prevue"|"interesse"|"estimation"|"mandat"|"perdu";
+type LikedProperty = {id:string;adresse:string;ville:string;lat?:number;lng?:number;source:"prospection"|"veille";likedAt:string;proprietaire_nom?:string;};
 type Mandat = { id:number; adresse:string; nom_propriete:string; ville:string; prix:number; surface:number; terrain:number; chambres:number; dpe:string; type:string; statut:string; pipeline:string; proprietaire:string; tel:string; email:string; honoraires:number; exclusif:boolean; fin_mandat:string; description:string; signature_request_id?:string; signature_status?:string; };
 type SignatureState = { loading:boolean; url?:string; error?:string; sandbox?:boolean; };
 type Prospect = { id:any; nom?:string; adresse:string; ville:string; score:number; source:string; status:string; notes:string; lat?:number; lng?:number; anciennete?:number; prix_achat?:number; proprietaire_nom?:string; proprietaire_prenom?:string; civilite?:string; proprietaire_source?:string; proprietaire_chargement?:boolean; type_local?:string; surface?:number; terrain?:number; pieces?:number; crm_status?:CrmStatus; classe_dpe?:string; age_jours?:number; };
@@ -123,7 +124,7 @@ const fmt = (n:number) => n?.toLocaleString("fr-FR") || "0";
 export default function App() {
   const router = useRouter();
   const [dark, setDark] = useState(false);
-  const [nav, setNav] = useState("prospects");
+  const [nav, setNav] = useState("accueil");
   const [mandats, setMandats] = useState<Mandat[]>(()=>{
     if(typeof window==="undefined") return MANDATS;
     try{const s=localStorage.getItem("m_mandats");return s?JSON.parse(s):MANDATS;}catch{return MANDATS;}
@@ -266,6 +267,14 @@ export default function App() {
     if(typeof window==="undefined") return {};
     try{return JSON.parse(localStorage.getItem("m_radar_basket")||"{}");}catch{return {};}
   });
+  const [likedProperties, setLikedProperties] = useState<Record<string,LikedProperty>>(()=>{
+    if(typeof window==="undefined") return {};
+    try{return JSON.parse(localStorage.getItem("m_liked_props")||"{}");}catch{return {};}
+  });
+  const [veilleLetterContent, setVeilleLetterContent] = useState("");
+  const [veilleLetterLoading, setVeilleLetterLoading] = useState(false);
+  const [veilleMfSending, setVeilleMfSending] = useState(false);
+  const [veilleMfDone, setVeilleMfDone] = useState<"ok"|"err"|null>(null);
   // Gamification
   const [courriersSent, setCourriersSent] = useState(()=>{
     if(typeof window==="undefined") return 0;
@@ -299,6 +308,7 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("m_courriers",JSON.stringify(courrierHisto));},[courrierHisto]);
   useEffect(()=>{localStorage.setItem("m_radar_villes",JSON.stringify(radarVilles));},[radarVilles]);
   useEffect(()=>{localStorage.setItem("m_radar_basket",JSON.stringify(radarBasket));},[radarBasket]);
+  useEffect(()=>{localStorage.setItem("m_liked_props",JSON.stringify(likedProperties));},[likedProperties]);
   useEffect(()=>{localStorage.setItem("m_crm_statuses",JSON.stringify(crmStatuses));},[crmStatuses]);
   useEffect(()=>{localStorage.setItem("m_prosp_crm",JSON.stringify(prospCrm));},[prospCrm]);
   useEffect(()=>{localStorage.setItem("m_sent_count",String(courriersSent));},[courriersSent]);
@@ -903,7 +913,7 @@ export default function App() {
   );
 
   // MAIN APP
-  const NAVS = [{id:"radar",label:"Prospection"},{id:"veille",label:"Veille"},{id:"mandats",label:"Mandats"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"estimation",label:"Estimation"},{id:"compta",label:"Comptabilité"},{id:"courriers",label:"Courriers"}];
+  const NAVS = [{id:"accueil",label:"Accueil"},{id:"radar",label:"Prospection"},{id:"veille",label:"Veille"},{id:"pipeline",label:"Pipeline"},{id:"acheteurs",label:"Acheteurs"},{id:"agenda",label:"Agenda"},{id:"courriers",label:"Courriers"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:C.bg,fontFamily:BODY,color:C.text,overflow:"hidden"}}>
@@ -1386,6 +1396,97 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* ACCUEIL — carte des biens likés */}
+        {nav==="accueil"&&(()=>{
+          const likedList = Object.values(likedProperties);
+          const fromProsp = likedList.filter(p=>p.source==="prospection");
+          const fromVeille = likedList.filter(p=>p.source==="veille");
+          const withCoords = likedList.filter(p=>p.lat&&p.lng);
+          const mapCenterAccueil: [number,number] = withCoords.length>0
+            ? [withCoords.reduce((s,p)=>s+(p.lat||0),0)/withCoords.length, withCoords.reduce((s,p)=>s+(p.lng||0),0)/withCoords.length]
+            : [44.837,-0.579];
+          return(
+          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            {/* LEFT: liste des biens likés */}
+            <div style={{width:300,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",background:C.surface,flexShrink:0}}>
+              <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontFamily:DISPLAY,fontSize:17,fontWeight:500,color:C.text,marginBottom:8}}>Mes biens suivis</div>
+                <div style={{display:"flex",gap:8}}>
+                  <div style={{flex:1,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                    <div style={{fontSize:18,fontWeight:700,color:C.green}}>{fromProsp.length}</div>
+                    <div style={{fontSize:10,color:C.green,fontWeight:600,marginTop:1}}>Boitage</div>
+                  </div>
+                  <div style={{flex:1,background:"#7C3AED15",border:"1px solid #7C3AED30",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                    <div style={{fontSize:18,fontWeight:700,color:"#7C3AED"}}>{fromVeille.length}</div>
+                    <div style={{fontSize:10,color:"#7C3AED",fontWeight:600,marginTop:1}}>Veille</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
+                {likedList.length===0?(
+                  <div style={{padding:"32px 16px",textAlign:"center"}}>
+                    <div style={{fontSize:24,marginBottom:8}}>♡</div>
+                    <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>Aucun bien suivi.<br/>Cliquez sur ♡ dans Prospection ou Veille pour mémoriser un bien.</div>
+                  </div>
+                ):likedList.sort((a,b)=>b.likedAt.localeCompare(a.likedAt)).map(p=>(
+                  <div key={p.id} style={{padding:"10px 10px",borderRadius:8,border:`1px solid ${p.source==="prospection"?C.green+"40":"#7C3AED40"}`,background:p.source==="prospection"?C.green+"08":"#7C3AED08",marginBottom:6,position:"relative"}}>
+                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:6}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse||p.ville}</div>
+                        {p.proprietaire_nom&&<div style={{fontSize:11,color:p.source==="prospection"?C.green:"#7C3AED",fontWeight:500,marginTop:1}}>{p.proprietaire_nom}</div>}
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3}}>
+                          <span style={{fontSize:9,fontWeight:700,color:p.source==="prospection"?C.green:"#7C3AED",background:p.source==="prospection"?C.green+"18":"#7C3AED18",borderRadius:3,padding:"1px 5px",textTransform:"uppercase",letterSpacing:"0.05em"}}>{p.source==="prospection"?"Boitage":"Veille"}</span>
+                          <span style={{fontSize:9,color:C.muted}}>{p.likedAt}</span>
+                        </div>
+                      </div>
+                      <button onClick={()=>setLikedProperties(prev=>{const next={...prev};delete next[p.id];return next;})} style={{background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer",flexShrink:0,lineHeight:1,padding:"2px 0"}}>×</button>
+                    </div>
+                    {p.lat&&p.lng&&(
+                      <button onClick={()=>{setNav("prospects");setMapCenter([p.lat!,p.lng!]);}} style={{marginTop:6,width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 0",fontSize:10,color:C.muted,cursor:"pointer"}}>Voir sur la carte →</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* RIGHT: carte */}
+            <div style={{flex:1,position:"relative"}}>
+              {likedList.length===0?(
+                <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",height:"100%",flexDirection:"column",gap:12}}>
+                  <div style={{fontFamily:DISPLAY,fontSize:28,fontStyle:"italic",color:C.muted,opacity:0.4}}>Carte vide</div>
+                  <div style={{fontSize:13,color:C.muted,textAlign:"center",maxWidth:300}}>Explorez la carte en Prospection ou identifiez des biens en Veille, puis cliquez ♡ pour les voir ici.</div>
+                  <div style={{display:"flex",gap:10,marginTop:8}}>
+                    <button onClick={()=>setNav("radar")} style={{padding:"9px 18px",background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}}>Prospection →</button>
+                    <button onClick={()=>setNav("veille")} style={{padding:"9px 18px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Veille →</button>
+                  </div>
+                  {/* Légende */}
+                  <div style={{display:"flex",gap:12,marginTop:16}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted}}><div style={{width:12,height:12,borderRadius:"50%",background:C.green}}/>Boitage</div>
+                    <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.muted}}><div style={{width:12,height:12,borderRadius:"50%",background:"#7C3AED"}}/>Veille</div>
+                  </div>
+                </div>
+              ):(
+                <>
+                  <Suspense fallback={<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted}}>Chargement...</div>}>
+                    <MapComponent
+                      prospects={[]}
+                      center={mapCenterAccueil}
+                      dark={dark}
+                      layers={{parcelles:false,ventes:false,proprietaires:false,dpe:false}}
+                      likedOverlay={withCoords.map(p=>({id:p.id,adresse:p.adresse,ville:p.ville,lat:p.lat!,lng:p.lng!,source:p.source}))}
+                    />
+                  </Suspense>
+                  {/* Légende */}
+                  <div style={{position:"absolute",bottom:16,right:16,zIndex:1000,background:"rgba(8,10,18,0.9)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,padding:"8px 12px",display:"flex",gap:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:"rgba(255,255,255,0.7)"}}><div style={{width:10,height:10,borderRadius:"50%",background:C.green}}/>Boitage ({fromProsp.length})</div>
+                    <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:"rgba(255,255,255,0.7)"}}><div style={{width:10,height:10,borderRadius:"50%",background:"#7C3AED"}}/>Veille ({fromVeille.length})</div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          );
+        })()}
 
         {/* PROSPECTION */}
         {nav==="prospects"&&(
@@ -1936,6 +2037,20 @@ export default function App() {
                       <button onClick={()=>setSvModal({lat:(selProspect as any).lat,lng:(selProspect as any).lng,adresse:selProspect.adresse})} style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 0",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Street View</button>
                     )}
                     <button onClick={()=>{setChat(true);setMsgs(m=>[...m,{id:Date.now(),role:"agent",text:`Analyse le prospect au ${selProspect.adresse}${selProspect.proprietaire_nom?" — propriétaire probable : "+selProspect.proprietaire_nom:""}. Score ${selProspect.score}/100. ${selProspect.notes}. Recommande une stratégie d'approche.`}]);}} style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 0",fontSize:11,color:C.text,cursor:"pointer",fontWeight:500}}>Lucas</button>
+                    {(()=>{
+                      const sid=String(selProspect.id);
+                      const isLiked=!!likedProperties[sid];
+                      return(
+                        <button onClick={()=>{
+                          setLikedProperties(prev=>{
+                            if(prev[sid]){const next={...prev};delete next[sid];return next;}
+                            return{...prev,[sid]:{id:sid,adresse:selProspect.adresse,ville:selProspect.ville,lat:(selProspect as any).lat,lng:(selProspect as any).lng,source:"prospection",likedAt:new Date().toLocaleDateString("fr-FR"),proprietaire_nom:selProspect.proprietaire_nom}};
+                          });
+                        }} style={{width:32,flexShrink:0,background:isLiked?C.green+"20":C.card,border:`1px solid ${isLiked?C.green:C.border}`,borderRadius:6,padding:"5px 0",fontSize:14,color:isLiked?C.green:C.muted,cursor:"pointer",transition:"all 0.15s"}}>
+                          {isLiked?"♥":"♡"}
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -3047,7 +3162,72 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                         Pappers Immo →
                       </a>
                     )}
+                    {(()=>{
+                      const sid=`veille-${analyserResult.lat?.toFixed(5)}-${analyserResult.lng?.toFixed(5)}`;
+                      const isLiked=!!likedProperties[sid];
+                      const adresse=analyserResult.adresse||analyserResult.parcel?.commune||analyserForm.ville;
+                      const ownerNom=analyserResult.pappers_immo?.proprietaires?.[0]?.nom||analyserResult.owner?.nom;
+                      return(
+                        <button onClick={()=>{
+                          setLikedProperties(prev=>{
+                            if(prev[sid]){const next={...prev};delete next[sid];return next;}
+                            return{...prev,[sid]:{id:sid,adresse,ville:analyserForm.ville,lat:analyserResult.lat,lng:analyserResult.lng,source:"veille",likedAt:new Date().toLocaleDateString("fr-FR"),proprietaire_nom:ownerNom}};
+                          });
+                        }} style={{width:42,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",padding:"9px 0",background:isLiked?"#7C3AED20":C.card,border:`1px solid ${isLiked?"#7C3AED":C.border}`,borderRadius:8,fontSize:16,color:isLiked?"#7C3AED":C.muted,cursor:"pointer",transition:"all 0.15s"}}>
+                          {isLiked?"♥":"♡"}
+                        </button>
+                      );
+                    })()}
                   </div>
+                  {/* Courrier veille */}
+                  {analyserResult.lat&&analyserResult.lng&&(
+                    <div style={{marginTop:12,borderTop:`1px solid ${C.border}`,paddingTop:12}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                        <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>Courrier personnalisé</div>
+                        <button onClick={async()=>{
+                          if(veilleLetterLoading) return;
+                          setVeilleLetterLoading(true); setVeilleLetterContent(""); setVeilleMfDone(null);
+                          const ownerNom=analyserResult.pappers_immo?.proprietaires?.[0]?.nom||analyserResult.owner?.nom;
+                          const adresse=analyserResult.adresse||analyserResult.parcel?.commune||analyserForm.ville;
+                          try{
+                            const r=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{role:"user",content:`Tu es Lucas, assistant IA d'un agent immobilier. Rédige un courrier de prospection professionnel pour ce bien :\n\nAdresse : ${adresse}\nVille : ${analyserForm.ville}\n${ownerNom?"Propriétaire : "+ownerNom+"\n":""}Description : bien repéré en veille immobilière.\n\nCourrier bref, sincère, non intrusif. Introduis l'agent : ${agent.prenom} ${agent.nom}, ${agent.agence}.`}]})});
+                            const d=await r.json();
+                            setVeilleLetterContent(d.content?.[0]?.text||d.text||"");
+                          }catch{setVeilleLetterContent("Erreur de génération.");}
+                          setVeilleLetterLoading(false);
+                        }} style={{padding:"3px 10px",background:veilleLetterLoading?C.border:C.accent,color:veilleLetterLoading?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:6,fontSize:11,fontWeight:600,cursor:veilleLetterLoading?"not-allowed":"pointer"}}>
+                          {veilleLetterLoading?"...":veilleLetterContent?"Regénérer":"Rédiger"}
+                        </button>
+                      </div>
+                      {veilleLetterContent&&(
+                        <>
+                          <textarea value={veilleLetterContent} onChange={e=>setVeilleLetterContent(e.target.value)} rows={7}
+                            style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px",fontSize:12,lineHeight:1.6,resize:"none",fontFamily:"inherit"}}
+                            onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                          <div style={{display:"flex",gap:8,marginTop:8}}>
+                            <button onClick={()=>navigator.clipboard.writeText(veilleLetterContent)} style={{flex:1,background:C.card,border:`1px solid ${C.border}`,borderRadius:7,padding:"7px 0",fontSize:12,color:C.text,cursor:"pointer",fontWeight:500}}>Copier</button>
+                            <button disabled={veilleMfSending} onClick={async()=>{
+                              if(veilleMfSending) return;
+                              setVeilleMfSending(true); setVeilleMfDone(null);
+                              const ownerNom=analyserResult.pappers_immo?.proprietaires?.[0]?.nom||analyserResult.owner?.nom||"Occupant";
+                              const adresse=analyserResult.adresse||analyserForm.ville;
+                              const cp=analyserForm.cp||analyserForm.ville.match(/\d{5}/)?.[0]||"33000";
+                              try{
+                                const r=await fetch("/api/merci-facteur",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dest_nom:ownerNom,dest_adresse:adresse,dest_cp:cp,dest_ville:analyserForm.ville.replace(/\d{5}\s*/,"").trim()||analyserForm.ville,exp_nom:`${agent.prenom} ${agent.nom}`,exp_adresse:agent.agence,content:veilleLetterContent})});
+                                const d=await r.json();
+                                setVeilleMfDone(d.ok?"ok":"err");
+                                if(d.ok) setCourriersSent(n=>n+1);
+                              }catch{setVeilleMfDone("err");}
+                              setVeilleMfSending(false);
+                            }} style={{flex:1,background:veilleMfSending?C.border:C.gold,color:veilleMfSending?"#888":"#000",border:"none",borderRadius:7,padding:"7px 0",fontSize:12,fontWeight:700,cursor:veilleMfSending?"not-allowed":"pointer"}}>
+                              {veilleMfSending?"Envoi...":"Merci Facteur →"}
+                            </button>
+                          </div>
+                          {veilleMfDone&&<div style={{marginTop:6,fontSize:11,color:veilleMfDone==="ok"?C.green:C.red}}>{veilleMfDone==="ok"?"Courrier envoyé.":"Erreur — configurez MERCI_FACTEUR_TOKEN."}</div>}
+                        </>
+                      )}
+                    </div>
+                  )}
                   {analyserResult.vision_score>0&&(
                     <div style={{fontSize:11,color:C.muted,marginTop:10}}>Score correspondance : {analyserResult.vision_score}%{analyserResult.vision_reason&&<span style={{display:"block",marginTop:1}}>{analyserResult.vision_reason}</span>}</div>
                   )}
@@ -3703,7 +3883,7 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                 <div style={{fontSize:13,fontWeight:600,color:C.text}}>{agent.prenom} {agent.nom}</div>
                 <div style={{fontSize:12,color:C.muted}}>{agent.agence}</div>
               </div>
-              {[["Radar","radar"],["Carte","prospects"],["Mandats","mandats"],["Comptabilité","compta"],["Estimation","estimation"],["Courriers","courriers"],["Agenda","agenda"]].map(([l,id])=>(
+              {[["Accueil","accueil"],["Prospection","prospects"],["Mandats","mandats"],["Estimation","estimation"],["Comptabilité","compta"]].map(([l,id])=>(
                 <button key={l} onClick={()=>{setNav(id);setProfile(false);}} style={{width:"100%",display:"flex",padding:"8px 14px",background:"none",border:"none",color:C.text,fontSize:13,textAlign:"left",borderRadius:8,cursor:"pointer"}}>
                   {l}
                 </button>

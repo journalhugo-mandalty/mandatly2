@@ -7,6 +7,7 @@ type Prospect = {
   proprietaire_nom?: string; classe_dpe?: string; prix_achat?: number; surface?: number;
 };
 export type LayerState = { parcelles: boolean; ventes: boolean; proprietaires: boolean; dpe: boolean; };
+export type LikedPin = { id: string; adresse: string; ville?: string; lat: number; lng: number; source: "prospection"|"veille"; };
 type Props = {
   prospects: Prospect[];
   onSelect?: (p: Prospect) => void;
@@ -16,6 +17,7 @@ type Props = {
   satellite?: boolean;
   flyToTarget?: { lat: number; lng: number; zoom?: number; key: any };
   layers?: LayerState;
+  likedOverlay?: LikedPin[];
 };
 
 const TILE_PLAN = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image%2Fpng&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
@@ -128,7 +130,7 @@ const DEFAULT_LAYERS: LayerState = { parcelles: true, ventes: true, proprietaire
 export default function MapComponent({
   prospects, onSelect, onParcelClick,
   center, dark=true, satellite:initSat=false,
-  flyToTarget, layers=DEFAULT_LAYERS,
+  flyToTarget, layers=DEFAULT_LAYERS, likedOverlay=[],
 }: Props) {
   const mapRef       = useRef<HTMLDivElement>(null);
   const mapInst      = useRef<any>(null);
@@ -136,6 +138,7 @@ export default function MapComponent({
   const parcLayerRef = useRef<any>(null);
   const markersRef   = useRef<any[]>([]);
   const badgesRef    = useRef<any[]>([]);
+  const likedMarkersRef = useRef<any[]>([]);
   const [searchVal, setSearchVal] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const searchTimer = useRef<any>(null);
@@ -254,6 +257,23 @@ export default function MapComponent({
       markersRef.current.push(marker);
     });
   },[ready,prospects,dark,layers?.ventes,layers?.dpe]);
+
+  // ── Pins liked (coeur vert = prospection, violet = veille) ───────────────
+  useEffect(()=>{
+    if(!ready||!mapInst.current)return;
+    const L=(window as any).L,map=mapInst.current;
+    likedMarkersRef.current.forEach(m=>m.remove());likedMarkersRef.current=[];
+    likedOverlay.filter(p=>p.lat&&p.lng).forEach(p=>{
+      const col=p.source==="prospection"?"#22C55E":"#7C3AED";
+      const icon=L.divIcon({className:"",
+        html:`<div style="width:24px;height:24px;border-radius:50%;background:${col};border:2.5px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;box-shadow:0 2px 10px ${col}80;cursor:pointer;">♥</div>`,
+        iconSize:[24,24],iconAnchor:[12,12],
+      });
+      const m=L.marker([p.lat,p.lng],{icon,zIndexOffset:200}).addTo(map);
+      m.bindTooltip(`<div style="font-family:-apple-system,sans-serif;font-size:12px;font-weight:600;color:#fff;">${p.adresse||p.ville||""}</div>`,{className:"mandatly-tooltip",direction:"top",offset:[0,-14]});
+      likedMarkersRef.current.push(m);
+    });
+  },[ready,likedOverlay]);
 
   // ── Helpers signal ────────────────────────────────────────────────────────
   const hasSignal=(f:any,type:"dvf"|"dpe"|"any")=>{
