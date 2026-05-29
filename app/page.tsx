@@ -654,7 +654,7 @@ export default function App() {
   }, [analyserForm]);
 
   // ── Cache Pappers Immo (localStorage, TTL 30 jours) ─────────────────────
-  const PAPPERS_TTL = 30 * 24 * 60 * 60 * 1000;
+  const PAPPERS_TTL = 180 * 24 * 60 * 60 * 1000;
   const pappersCache = useCallback(() => {
     try { return JSON.parse(localStorage.getItem("m_pappers_cache") || "{}") as Record<string, { nom: string; prenom: string; civilite: string; source: string; ts: number }>; }
     catch { return {}; }
