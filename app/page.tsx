@@ -2899,8 +2899,14 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                     {analyserResult.method?.startsWith("pappers")&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>Cadastre — fiable</span>}
                     {analyserResult.method==="dvf_vision"&&!analyserResult.low_confidence&&<span style={{fontSize:10,color:C.green,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — fiable</span>}
                     {analyserResult.method==="dvf_vision"&&analyserResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                    {analyserResult.method==="dvf_surface"&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>Surface DVF — à confirmer</span>}
                   </div>
-                  {analyserResult.lat&&analyserResult.lng&&analyserResult.method!=="dvf"&&(
+                  {analyserResult.method==="dvf_surface"&&(
+                    <div style={{fontSize:12,color:C.amber,background:C.amber+"12",border:`1px solid ${C.amber}30`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+                      Adresse estimée par surface uniquement. Ajoutez des photos pour un résultat précis.
+                    </div>
+                  )}
+                  {analyserResult.lat&&analyserResult.lng&&analyserResult.method!=="dvf"&&analyserResult.method!=="dvf_surface"&&(
                     <div style={{marginBottom:14,borderRadius:10,overflow:"hidden",border:`1px solid ${C.border}`,position:"relative"}}>
                       <img src={`https://data.geopf.fr/wms-r/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=HR.ORTHOIMAGERY.ORTHOPHOTOS&FORMAT=image/jpeg&WIDTH=600&HEIGHT=240&SRS=EPSG:4326&BBOX=${analyserResult.lng-0.002},${analyserResult.lat-0.001},${analyserResult.lng+0.002},${analyserResult.lat+0.001}`}
                         alt="Vue aérienne" style={{width:"100%",height:200,objectFit:"cover",display:"block"}}/>
