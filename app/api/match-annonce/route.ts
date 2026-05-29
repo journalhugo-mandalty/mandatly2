@@ -765,12 +765,25 @@ export async function POST(req: NextRequest) {
   if (allPhotosB64.length > 0 && dvfTypePool.length > 0) {
     const medCandidates = dvfMatch?.confidence === "medium" && dvfMatch.candidates?.length
       ? dvfMatch.candidates : null;
-    const candidates: DvfCandidate[] = medCandidates
-      ? medCandidates
-      : [...dvfTypePool]
-          .filter(r => r.surface_bati >= surface * 0.55 && r.surface_bati <= surface * 1.80)
-          .sort((a, b) => Math.abs(a.surface_bati - surface) - Math.abs(b.surface_bati - surface))
-          .slice(0, 7);
+    // Tri composite: 60% proximité géographique + 40% proximité de surface
+    // → priorité aux biens proches des coordonnées de l'annonce
+    const geoSort = (pool: any[]) => {
+      const R = 6371;
+      return pool
+        .filter(r => r.surface_bati >= surface * 0.55 && r.surface_bati <= surface * 1.80)
+        .map(r => {
+          const dLat = (r.lat - lat) * Math.PI / 180;
+          const dLng = (r.lng - lng) * Math.PI / 180;
+          const a = Math.sin(dLat/2)**2 + Math.cos(lat*Math.PI/180)*Math.cos(r.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+          const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const surfaceScore = Math.abs(r.surface_bati - surface) / Math.max(surface, 1);
+          const geoScore = Math.min(distKm / 3, 1); // normalisé sur 3km
+          return { ...r, _score: geoScore * 0.6 + surfaceScore * 0.4 };
+        })
+        .sort((a, b) => a._score - b._score)
+        .slice(0, 7);
+    };
+    const candidates: DvfCandidate[] = medCandidates ? medCandidates : geoSort(dvfTypePool);
 
     // Réutiliser le descriptor Pappers si déjà calculé
     const descriptor = descriptorUsed ?? await extractVisualDescriptor(allPhotosB64, surface, type, anthropicKey);
