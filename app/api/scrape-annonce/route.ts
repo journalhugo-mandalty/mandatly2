@@ -1,133 +1,116 @@
 import { NextRequest, NextResponse } from "next/server";
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-function extractJsonLd(html: string): any | null {
-  const matches = [...html.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)];
-  for (const m of matches) {
-    try {
-      const data = JSON.parse(m[1]);
-      const arr = Array.isArray(data) ? data : [data];
-      for (const item of arr) {
-        if (item["@type"] === "Product" || item["@type"] === "Offer" || item["@type"] === "RealEstateListing" || item.name || item.description) {
-          return item;
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  return null;
-}
-
-function extractImgUrls(html: string): string[] {
-  const urls: string[] = [];
-  const imgRe = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = imgRe.exec(html)) !== null) {
-    const src = m[1];
-    if (
-      src.startsWith("http") &&
-      !src.includes("logo") && !src.includes("icon") && !src.includes("avatar") &&
-      !src.includes("tracking") && !src.includes("pixel") &&
-      (src.match(/\.(jpg|jpeg|png|webp)/i) || src.includes("photo") || src.includes("image") || src.includes("media"))
-    ) {
-      urls.push(src);
-    }
-  }
-  // Also check srcset
-  const srcsetRe = /srcset=["']([^"']+)["']/gi;
-  while ((m = srcsetRe.exec(html)) !== null) {
-    const parts = m[1].split(",").map(p => p.trim().split(" ")[0]);
-    for (const p of parts) {
-      if (p.startsWith("http") && p.match(/\.(jpg|jpeg|png|webp)/i)) urls.push(p);
-    }
-  }
-  return [...new Set(urls)].slice(0, 10);
+// Tente d'extraire la ville depuis le slug d'URL (seloger, leboncoin, pap, bienici...)
+function cityFromUrl(url: string): { ville: string; cp: string } {
+  try {
+    const u = new URL(url);
+    const path = u.pathname + u.hostname;
+    // Patterns : /bordeaux-33/ ou /33000-bordeaux ou /vente/maison/bordeaux_33/
+    const cpCity = path.match(/[/_-](\d{5})[/_-]([a-z-]+)/i);
+    if (cpCity) return { cp: cpCity[1], ville: cpCity[2].replace(/-/g, " ") };
+    const cityDept = path.match(/[/_]([a-z-]{4,})-(\d{2,3})[/_]/i);
+    if (cityDept) return { cp: cityDept[2].padEnd(5, "0"), ville: cityDept[1].replace(/-/g, " ") };
+    const cityOnly = path.match(/\/(vente|achat|location)\/(?:maison|appartement)\/([a-z-]{4,})\//i);
+    if (cityOnly) return { cp: "", ville: cityOnly[2].replace(/-/g, " ") };
+  } catch {}
+  return { ville: "", cp: "" };
 }
 
 export async function POST(req: NextRequest) {
-  const { url } = await req.json().catch(() => ({}));
-  if (!url || typeof url !== "string") {
-    return NextResponse.json({ error: "URL requise" }, { status: 400 });
+  const body = await req.json().catch(() => ({}));
+  const { url, text } = body as { url?: string; text?: string };
+
+  if (!url && !text) {
+    return NextResponse.json({ error: "URL ou texte requis" }, { status: 400 });
   }
 
-  const scrapflyKey = process.env.SCRAPFLY_API_KEY;
-  if (!scrapflyKey) {
-    return NextResponse.json({ error: "SCRAPFLY_API_KEY non configurée" }, { status: 500 });
-  }
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicKey) {
     return NextResponse.json({ error: "ANTHROPIC_API_KEY non configurée" }, { status: 500 });
   }
 
-  // ── 1. Scrapfly — rendu JS + protection anti-bot ────────────────────────
-  let html = "";
-  try {
-    const scrapeRes = await fetch(
-      `https://api.scrapfly.io/scrape?key=${scrapflyKey}&url=${encodeURIComponent(url)}&render_js=true&asp=true&country=fr&timeout=30000`,
-      { signal: AbortSignal.timeout(35000) }
-    );
-    if (!scrapeRes.ok) {
-      const errBody = await scrapeRes.text().catch(() => "");
-      return NextResponse.json({ error: `Scrapfly erreur ${scrapeRes.status}: ${errBody.slice(0, 200)}` }, { status: 502 });
+  let content = text || "";
+
+  // ── Si URL fournie : tenter Jina, sinon extraire la ville du slug ────────
+  if (url && !content) {
+    let jinaOk = false;
+    try {
+      const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
+        headers: { "Accept": "text/markdown", "X-Return-Format": "markdown" },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (jinaRes.ok) {
+        const md = await jinaRes.text();
+        if (md && md.length > 200 && !md.includes("security verification") && !md.includes("CAPTCHA")) {
+          content = md;
+          jinaOk = true;
+        }
+      }
+    } catch { /* Jina bloqué */ }
+
+    if (!jinaOk) {
+      // Fallback : extraire ce qu'on peut de l'URL et demander le texte
+      const { ville, cp } = cityFromUrl(url);
+      return NextResponse.json({
+        partial: true,
+        ville,
+        cp,
+        error_hint: "Ce site bloque la lecture automatique. Copiez-collez la description de l'annonce dans le champ texte.",
+      });
     }
-    const scrapeData = await scrapeRes.json();
-    html = scrapeData.result?.content || "";
-    if (!html) return NextResponse.json({ error: "Page vide — site peut-être protégé" }, { status: 422 });
-  } catch (e: any) {
-    return NextResponse.json({ error: "Scrapfly timeout ou réseau" }, { status: 504 });
   }
 
-  // ── 2. Extraction rapide : JSON-LD + images ──────────────────────────────
-  const jsonLd = extractJsonLd(html);
-  const imgUrls = extractImgUrls(html);
+  if (!content || content.length < 50) {
+    return NextResponse.json({ error: "Contenu trop court pour extraire des données" }, { status: 422 });
+  }
 
-  // ── 3. Claude Haiku — extraction structurée ──────────────────────────────
-  const text = stripHtml(html).slice(0, 18000);
+  // ── Claude Haiku — extraction structurée ─────────────────────────────────
+  const prompt = `Tu es un extracteur de données immobilières françaises. Analyse ce texte d'annonce et retourne UNIQUEMENT un objet JSON valide, sans markdown ni explication.
 
-  const prompt = `Tu es un extracteur de données immobilières. Analyse ce contenu d'annonce immobilière française et retourne UNIQUEMENT un objet JSON valide (pas de markdown, pas d'explication).
+Texte :
+${content.slice(0, 20000)}
 
-${jsonLd ? `Données structurées JSON-LD trouvées : ${JSON.stringify(jsonLd).slice(0, 2000)}\n\n` : ""}Texte de la page :
-${text}
-
-Retourne ce JSON :
+JSON :
 {
-  "titre": "titre exact de l'annonce",
-  "ville": "nom de la ville (ex: Bordeaux)",
-  "cp": "code postal 5 chiffres",
+  "titre": "titre de l'annonce",
+  "ville": "commune (ex: Bordeaux)",
+  "cp": "code postal 5 chiffres ou chaîne vide",
   "type": "Maison" ou "Appartement",
-  "surface": nombre entier en m²,
-  "terrain": nombre entier en m² (0 si pas de terrain),
-  "prix": nombre entier en euros (0 si inconnu),
+  "surface": nombre entier m² habitable,
+  "terrain": nombre entier m² terrain (0 si aucun),
+  "prix": nombre entier euros (0 si inconnu),
   "nb_pieces": nombre entier (0 si inconnu),
-  "description": "texte complet de la description, max 800 caractères",
-  "adresse_indicative": "adresse ou quartier si mentionné, sinon vide",
-  "indices_localisation": "tout indice de localisation : rue, quartier, proximité école/commerces/gare"
+  "description": "description complète max 600 caractères",
+  "adresse_indicative": "rue ou adresse si mentionnée sinon vide",
+  "indices_localisation": "quartier, rues proches, écoles, gare, commerces, orientation — tout indice utile"
 }`;
 
   try {
     const cr = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 600,
+        max_tokens: 700,
         messages: [{ role: "user", content: prompt }],
       }),
       signal: AbortSignal.timeout(20000),
     });
-    if (!cr.ok) return NextResponse.json({ error: "Claude extraction échouée" }, { status: 500 });
+    if (!cr.ok) return NextResponse.json({ error: "Extraction IA échouée" }, { status: 500 });
     const cd = await cr.json();
-    const raw = (cd.content?.[0]?.text || "").trim().replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+    const raw = (cd.content?.[0]?.text || "")
+      .trim()
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/```$/, "")
+      .trim();
     const extracted = JSON.parse(raw);
-    return NextResponse.json({ ...extracted, photos: imgUrls });
+    return NextResponse.json({ ...extracted, photos: [] });
   } catch {
-    return NextResponse.json({ error: "Extraction échouée — le site est peut-être trop protégé" }, { status: 422 });
+    return NextResponse.json({ error: "Extraction échouée" }, { status: 422 });
   }
 }

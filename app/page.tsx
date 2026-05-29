@@ -669,16 +669,21 @@ export default function App() {
   }, [analyserForm]);
 
   const handleScrapeAnnonce = useCallback(async () => {
-    if (!scrapeUrl.trim() || scrapeLoading) return;
+    const raw = scrapeUrl.trim();
+    if (!raw || scrapeLoading) return;
     setScrapeLoading(true); setScrapeError(""); setAnalyserResult(null);
     try {
+      // Détecter si c'est une URL ou du texte collé
+      const isUrl = /^https?:\/\//i.test(raw);
+      const body = isUrl ? { url: raw } : { text: raw };
       const r = await fetch("/api/scrape-annonce", {
         method: "POST",
         headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ url: scrapeUrl.trim() }),
+        body: JSON.stringify(body),
       });
       const d = await r.json();
-      if (d.error) { setScrapeError(d.error); setScrapeLoading(false); return; }
+      if (d.error && !d.partial) { setScrapeError(d.error); setScrapeLoading(false); return; }
+      if (d.error_hint) setScrapeError(d.error_hint);
       setAnalyserForm(f => ({
         ...f,
         ville: d.ville || f.ville,
@@ -3095,64 +3100,18 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                 })()}
               </>)}
               {veilleMode==="analyser"&&(
-                <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                {/* URL auto-extract */}
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <div style={{flex:1,display:"flex",alignItems:"center",gap:0,background:C.card,border:`1px solid ${scrapeError?C.red:C.border}`,borderRadius:8,overflow:"hidden"}}>
-                    <span style={{padding:"0 10px",fontSize:12,color:C.muted,whiteSpace:"nowrap",borderRight:`1px solid ${C.border}`}}>URL annonce</span>
-                    <input
-                      value={scrapeUrl}
-                      onChange={e=>{setScrapeUrl(e.target.value);setScrapeError("");}}
-                      onKeyDown={e=>e.key==="Enter"&&handleScrapeAnnonce()}
-                      placeholder="https://www.seloger.com/... ou leboncoin, pap, bienici..."
-                      style={{flex:1,background:"transparent",border:"none",color:C.text,padding:"8px 12px",fontSize:12,outline:"none",fontFamily:"monospace"}}
-                    />
-                  </div>
-                  <button
-                    disabled={!scrapeUrl.trim()||scrapeLoading}
-                    onClick={handleScrapeAnnonce}
-                    style={{padding:"8px 16px",background:scrapeLoading||!scrapeUrl.trim()?C.border:C.accent,color:scrapeLoading||!scrapeUrl.trim()?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,fontSize:12,fontWeight:700,cursor:scrapeLoading||!scrapeUrl.trim()?"not-allowed":"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-                    {scrapeLoading?(
-                      <span style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:8,height:8,borderRadius:"50%",background:"currentColor",animation:"pulse 1s infinite"}}/>Extraction...</span>
-                    ):"Extraire l'annonce"}
-                  </button>
-                </div>
-                {scrapeError&&<div style={{fontSize:11,color:C.red,padding:"6px 10px",background:C.red+"12",borderRadius:6,border:`1px solid ${C.red}30`}}>{scrapeError}</div>}
-                <div style={{fontSize:10,color:C.muted}}>Ou remplissez manuellement :</div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:10,alignItems:"flex-end"}}>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Ville</label>
-                    <input value={analyserForm.ville} onChange={e=>setAnalyserForm(f=>({...f,ville:e.target.value}))}
-                      placeholder="Ex : Bordeaux" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:160}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Code postal</label>
-                    <input value={analyserForm.cp} onChange={e=>setAnalyserForm(f=>({...f,cp:e.target.value}))}
-                      placeholder="33000" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:90}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Type</label>
-                    <select value={analyserForm.type} onChange={e=>setAnalyserForm(f=>({...f,type:e.target.value as any}))}
-                      style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,cursor:"pointer"}}>
-                      <option value="Maison">Maison</option>
-                      <option value="Appartement">Appartement</option>
-                    </select>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Surface m²</label>
-                    <input value={analyserForm.surface} onChange={e=>setAnalyserForm(f=>({...f,surface:e.target.value}))}
-                      placeholder="120" type="number" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:90}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Terrain m²</label>
-                    <input value={analyserForm.terrain} onChange={e=>setAnalyserForm(f=>({...f,terrain:e.target.value}))}
-                      placeholder="600" type="number" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"8px 12px",fontSize:13,width:90}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  </div>
                   <button disabled={analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface} onClick={handleAnalyserAnnonce}
-                    style={{background:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.border:C.accent,color:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?"not-allowed":"pointer",alignSelf:"flex-end"}}>
-                    {analyserLoading?"...":"Identifier"}
+                    style={{padding:"8px 20px",background:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.border:C.accent,color:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:analyserLoading||!analyserForm.ville.trim()||!analyserForm.surface?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
+                    {analyserLoading?"Identification…":"Identifier le bien"}
                   </button>
-                </div>
+                  {(analyserForm.ville||analyserForm.surface)&&(
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {analyserForm.ville&&<span style={{fontSize:11,color:C.text,background:C.card,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px"}}>{analyserForm.ville}</span>}
+                      {analyserForm.surface&&<span style={{fontSize:11,color:C.text,background:C.card,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px"}}>{analyserForm.surface} m²</span>}
+                      {analyserForm.type&&<span style={{fontSize:11,color:C.muted,background:C.card,border:`1px solid ${C.border}`,borderRadius:5,padding:"3px 8px"}}>{analyserForm.type}</span>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3160,22 +3119,81 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
             {/* Content */}
             {veilleMode==="analyser"&&(
             <div style={{flex:1,overflowY:"auto",padding:"24px 28px"}}>
-              {/* Description + photoUrls */}
-              <div style={{maxWidth:680,display:"flex",flexDirection:"column",gap:14}}>
-                <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                  <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Description de l'annonce</label>
-                  <textarea value={analyserForm.description} onChange={e=>setAnalyserForm(f=>({...f,description:e.target.value}))}
-                    placeholder="Collez ici le descriptif de l'annonce (adresse approximative, caractéristiques, quartier...)"
-                    rows={4}
-                    style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:13,resize:"vertical",fontFamily:"inherit",lineHeight:1.5}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+              <div style={{maxWidth:680,display:"flex",flexDirection:"column",gap:16}}>
+
+                {/* ZONE PASTE PRINCIPALE */}
+                <div style={{background:C.card,border:`2px dashed ${scrapeLoading?C.accent:C.border}`,borderRadius:10,padding:"16px",transition:"border-color 0.2s"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text}}>Coller l'annonce complète</div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:2}}>Sélectionnez tout le texte de l'annonce (Ctrl+A), copiez, et collez ici — Claude extrait automatiquement toutes les infos</div>
+                    </div>
+                    <button
+                      disabled={!scrapeUrl.trim()||scrapeLoading}
+                      onClick={handleScrapeAnnonce}
+                      style={{flexShrink:0,marginLeft:12,padding:"7px 14px",background:scrapeLoading||!scrapeUrl.trim()?C.border:C.accent,color:scrapeLoading||!scrapeUrl.trim()?C.muted:(dark?"#080808":"#FAFAFA"),border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:scrapeLoading||!scrapeUrl.trim()?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
+                      {scrapeLoading?"Extraction…":"Extraire"}
+                    </button>
+                  </div>
+                  <textarea
+                    value={scrapeUrl}
+                    onChange={e=>{setScrapeUrl(e.target.value);setScrapeError("");}}
+                    placeholder={"Collez ici tout le texte de l'annonce SeLoger, LeBonCoin, PAP, Bien'ici...\n\nBelle maison 4 pièces, 120 m², jardin 600 m², proche école, quartier calme...\nPrix : 285 000 €\nSecteur : Mérignac (33700)"}
+                    rows={6}
+                    style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"10px 12px",fontSize:12,resize:"vertical",fontFamily:"inherit",lineHeight:1.6,boxSizing:"border-box"}}
+                    onFocus={e=>e.target.style.borderColor=C.text}
+                    onBlur={e=>e.target.style.borderColor=C.border}
+                  />
+                  {scrapeError&&<div style={{marginTop:6,fontSize:11,color:C.red}}>{scrapeError}</div>}
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                  <label style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>URLs des photos</label>
-                  <textarea value={analyserForm.photoUrls} onChange={e=>setAnalyserForm(f=>({...f,photoUrls:e.target.value}))}
-                    placeholder={"Collez les URLs des photos, une par ligne\nhttps://...photo1.jpg\nhttps://...photo2.jpg"}
-                    rows={3}
-                    style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,padding:"10px 12px",fontSize:12,resize:"vertical",fontFamily:"monospace",lineHeight:1.5}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
-                  <div style={{fontSize:11,color:C.muted}}>Les photos sont utilisées par l'IA pour identifier visuellement le bien (piscine, toiture, façade...).</div>
+
+                {/* Champs manuels — affichés après extraction ou toujours visibles */}
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.08em"}}>Ou renseignez manuellement</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <label style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Ville</label>
+                      <input value={analyserForm.ville} onChange={e=>setAnalyserForm(f=>({...f,ville:e.target.value}))}
+                        placeholder="Ex : Bordeaux" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,width:150}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <label style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Code postal</label>
+                      <input value={analyserForm.cp} onChange={e=>setAnalyserForm(f=>({...f,cp:e.target.value}))}
+                        placeholder="33000" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,width:85}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <label style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Type</label>
+                      <select value={analyserForm.type} onChange={e=>setAnalyserForm(f=>({...f,type:e.target.value as any}))}
+                        style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,cursor:"pointer"}}>
+                        <option value="Maison">Maison</option>
+                        <option value="Appartement">Appartement</option>
+                      </select>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <label style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Surface m²</label>
+                      <input value={analyserForm.surface} onChange={e=>setAnalyserForm(f=>({...f,surface:e.target.value}))}
+                        placeholder="120" type="number" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,width:85}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <label style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Terrain m²</label>
+                      <input value={analyserForm.terrain} onChange={e=>setAnalyserForm(f=>({...f,terrain:e.target.value}))}
+                        placeholder="600" type="number" style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"7px 10px",fontSize:13,width:85}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <label style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Description / indices de localisation</label>
+                    <textarea value={analyserForm.description} onChange={e=>setAnalyserForm(f=>({...f,description:e.target.value}))}
+                      placeholder="Quartier, rue proche, école, commerces, orientation..."
+                      rows={3}
+                      style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"8px 10px",fontSize:12,resize:"vertical",fontFamily:"inherit",lineHeight:1.5,width:"100%",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <label style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>URLs photos (une par ligne)</label>
+                    <textarea value={analyserForm.photoUrls} onChange={e=>setAnalyserForm(f=>({...f,photoUrls:e.target.value}))}
+                      placeholder={"https://...photo1.jpg\nhttps://...photo2.jpg"}
+                      rows={2}
+                      style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,padding:"8px 10px",fontSize:11,resize:"vertical",fontFamily:"monospace",lineHeight:1.5,width:"100%",boxSizing:"border-box"}} onFocus={e=>e.target.style.borderColor=C.text} onBlur={e=>e.target.style.borderColor=C.border}/>
+                  </div>
                 </div>
               </div>
               {analyserLoading&&(
