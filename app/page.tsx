@@ -255,7 +255,7 @@ export default function App() {
   const [radarView, setRadarView] = useState<"cards"|"map">("cards");
   const [dpeMapLoading, setDpeMapLoading] = useState(false);
   const [radarSelected, setRadarSelected] = useState<any>(null);
-  const [radarLayers, setRadarLayers] = useState({ parcelles: true, ventes: true, proprietaires: false, dpe: true });
+  const [radarLayers, setRadarLayers] = useState({ parcelles: true, ventes: false, proprietaires: false, dpe: true });
   const [radarParcelPanel, setRadarParcelPanel] = useState<{
     properties: any; centroid: [number,number]; matching: any[];
     address: string|null; owner: any|null; ownerLoading: boolean;
@@ -653,6 +653,29 @@ export default function App() {
     setAnalyserLoading(false);
   }, [analyserForm]);
 
+  // ── Cache Pappers Immo (localStorage, TTL 30 jours) ─────────────────────
+  const PAPPERS_TTL = 30 * 24 * 60 * 60 * 1000;
+  const pappersCache = useCallback(() => {
+    try { return JSON.parse(localStorage.getItem("m_pappers_cache") || "{}") as Record<string, { nom: string; prenom: string; civilite: string; source: string; ts: number }>; }
+    catch { return {}; }
+  }, []);
+  const getPappersCache = useCallback((lat: number, lng: number) => {
+    const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+    const entry = pappersCache()[key];
+    if (!entry || Date.now() - entry.ts > PAPPERS_TTL) return null;
+    return entry;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const setPappersCache = useCallback((lat: number, lng: number, nom: string, prenom: string, civilite: string, source: string) => {
+    const cache = pappersCache();
+    const now = Date.now();
+    cache[`${lat.toFixed(4)},${lng.toFixed(4)}`] = { nom, prenom, civilite, source, ts: now };
+    // Nettoyer les entrées expirées
+    for (const k in cache) { if (now - cache[k].ts > PAPPERS_TTL) delete cache[k]; }
+    try { localStorage.setItem("m_pappers_cache", JSON.stringify(cache)); } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadRadar = useCallback(async () => {
     if (!radarVilles.length) return;
     setRadarLoading(true); setRadarProspects([]); setRadarIdx(0); setRadarSelected(null);
@@ -673,11 +696,21 @@ export default function App() {
     setRadarProspects(sorted);
     setRadarLoading(false);
     setRadarView("map");
-    // Enrichissement propriétaire en arrière-plan sur les 20 premiers
-    const toEnrich = sorted.filter(p => p.lat && p.lng).slice(0, 20);
+    // DPE récents (<180j) en priorité d'enrichissement, puis top DVF
+    const withCoords = sorted.filter(p => p.lat && p.lng);
+    const dpeRecents = withCoords.filter(p => p.source === "DPE" && (p.age_jours ?? 999) <= 180);
+    const others = withCoords.filter(p => !dpeRecents.includes(p));
+    const toEnrich = [...dpeRecents, ...others].slice(0, 25);
     for (let i = 0; i < toEnrich.length; i += 4) {
       const batch = toEnrich.slice(i, i + 4);
       await Promise.allSettled(batch.map(async (p) => {
+        if (!p.lat || !p.lng) return;
+        // Cache hit → pas d'appel API
+        const cached = getPappersCache(p.lat, p.lng);
+        if (cached) {
+          setRadarProspects(prev => prev.map(x => x.id === p.id ? { ...x, proprietaire_nom: cached.nom, proprietaire_prenom: cached.prenom, civilite: cached.civilite, proprietaire_source: cached.source } : x));
+          return;
+        }
         try {
           const cleanAddr = p.adresse.replace(/\b\d{5}\b\s*/g, "").trim();
           const q = cleanAddr.toLowerCase().includes(p.ville.toLowerCase()) ? cleanAddr : `${cleanAddr} ${p.ville}`;
@@ -685,6 +718,7 @@ export default function App() {
           if (!r.ok) return;
           const d = await r.json();
           if (!d.proprietaire_nom) return;
+          setPappersCache(p.lat, p.lng, d.proprietaire_nom, d.proprietaire_prenom || "", d.civilite || "", d.proprietaire_source || "");
           setRadarProspects(prev => prev.map(x => x.id === p.id ? {
             ...x,
             proprietaire_nom: d.proprietaire_nom,
@@ -696,7 +730,7 @@ export default function App() {
       }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [radarVilles, radarDone, radarLetterTemplate, agent]);
+  }, [radarVilles, radarDone, radarLetterTemplate, agent, getPappersCache, setPappersCache]);
 
   const loadDpeOnly = useCallback(async () => {
     if (!radarVilles.length) return;
@@ -1061,9 +1095,6 @@ export default function App() {
                 </div>
                 <button disabled={radarLoading||radarVilles.length===0} onClick={loadRadar} style={{width:"100%",background:radarLoading||radarVilles.length===0?C.border:C.accent,color:radarLoading||radarVilles.length===0?C.muted:(dark?"#080808":"#fff"),border:"none",borderRadius:6,padding:"8px",fontSize:11,fontWeight:700,cursor:radarLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s",marginBottom:5}}>
                   {radarLoading?"Analyse…":"Lancer le radar"}
-                </button>
-                <button disabled={dpeMapLoading||radarVilles.length===0} onClick={loadDpeOnly} style={{width:"100%",background:"transparent",color:dpeMapLoading||radarVilles.length===0?C.muted:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px",fontSize:10,fontWeight:600,cursor:dpeMapLoading||radarVilles.length===0?"default":"pointer",transition:"all 0.15s"}}>
-                  {dpeMapLoading?"Chargement…":"Carte DPE (gratuit)"}
                 </button>
                 {radarProspects.length>0&&<div style={{fontSize:10,color:C.muted,marginTop:6,textAlign:"center"}}>{radarProspects.length} biens chargés</div>}
               </div>
@@ -1749,7 +1780,7 @@ export default function App() {
             <div style={{flex:1,position:"relative"}}>
               <Suspense fallback={<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:13}}>Chargement de la carte...</div>}>
                 <MapComponent
-                  prospects={prospects.filter(p=>!prospMethod||p.source===prospMethod).filter((p:any)=>p.lat&&p.lng) as any}
+                  prospects={prospects.filter(p=>p.source==="DPE").filter((p:any)=>p.lat&&p.lng) as any}
                   onSelect={(p:any)=>{
                     const full = prospects.find(x => String(x.id) === String(p.id)) || p;
                     setSelProspect(full as any);
