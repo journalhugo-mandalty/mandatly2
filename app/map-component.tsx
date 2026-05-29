@@ -18,9 +18,9 @@ type Props = {
   layers?: LayerState;
 };
 
-const TILE_DARK     = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const TILE_LIGHT    = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-const TILE_SAT      = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+// IGN Géoplateforme — fonds officiels français (gratuits, sans clé)
+const TILE_PLAN     = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image%2Fpng&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+const TILE_SAT      = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
 const TILE_CADASTRE = "https://data.geopf.fr/wmts?REQUEST=GetTile&SERVICE=WMTS&VERSION=1.0.0&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image%2Fpng&LAYER=CADASTRALPARCELS.PARCELLAIRE_EXPRESS&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
 
 const Z_COMMUNE = 9;
@@ -147,7 +147,7 @@ export default function MapComponent({
     scr.onload = () => {
       const L = (window as any).L;
       const map = L.map(mapRef.current, { center:[44.837,-0.579], zoom:6, zoomControl:false, attributionControl:false });
-      tileRef.current = L.tileLayer(initSat ? TILE_SAT : (dark ? TILE_DARK : TILE_LIGHT), { maxZoom:19 }).addTo(map);
+      tileRef.current = L.tileLayer(initSat ? TILE_SAT : TILE_PLAN, { maxZoom:19 }).addTo(map);
       L.control.zoom({ position:"bottomright" }).addTo(map);
       mapInst.current = map;
       map.on("click", async (e: any) => {
@@ -179,15 +179,15 @@ export default function MapComponent({
     if (!ready || !mapInst.current) return;
     const L = (window as any).L;
     if (tileRef.current) tileRef.current.remove();
-    tileRef.current = L.tileLayer(isSat ? TILE_SAT : (dark ? TILE_DARK : TILE_LIGHT), { maxZoom:19 }).addTo(mapInst.current);
-  }, [isSat, dark, ready]);
+    tileRef.current = L.tileLayer(isSat ? TILE_SAT : TILE_PLAN, { maxZoom:19 }).addTo(mapInst.current);
+  }, [isSat, ready]);
 
   useEffect(() => {
     if (!ready || !mapInst.current) return;
     const L = (window as any).L;
     const shouldShow = layers?.parcelles && zoom >= Z_PARCEL;
     if (shouldShow && !cadastreRef.current) {
-      cadastreRef.current = L.tileLayer(TILE_CADASTRE, { opacity: 0.4, maxZoom:20 }).addTo(mapInst.current);
+      cadastreRef.current = L.tileLayer(TILE_CADASTRE, { opacity: isSat ? 0.55 : 0.7, maxZoom:20 }).addTo(mapInst.current);
       markersRef.current.forEach(m => m.bringToFront?.());
     } else if (!shouldShow && cadastreRef.current) {
       cadastreRef.current.remove(); cadastreRef.current = null;
