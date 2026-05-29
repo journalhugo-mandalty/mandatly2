@@ -18,9 +18,8 @@ type Props = {
   layers?: LayerState;
 };
 
-const TILE_PLAN     = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image%2Fpng&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
-const TILE_SAT      = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
-const TILE_CADASTRE = "https://data.geopf.fr/wmts?REQUEST=GetTile&SERVICE=WMTS&VERSION=1.0.0&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image%2Fpng&LAYER=CADASTRALPARCELS.PARCELLAIRE_EXPRESS&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+const TILE_PLAN = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image%2Fpng&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+const TILE_SAT  = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
 
 const Z_REGION  = 5;
 const Z_DEPT    = 8;
@@ -128,10 +127,12 @@ export default function MapComponent({
   const mapRef       = useRef<HTMLDivElement>(null);
   const mapInst      = useRef<any>(null);
   const tileRef      = useRef<any>(null);
-  const cadastreRef  = useRef<any>(null);
   const parcLayerRef = useRef<any>(null);
   const markersRef   = useRef<any[]>([]);
   const badgesRef    = useRef<any[]>([]);
+  const [searchVal, setSearchVal] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const searchTimer = useRef<any>(null);
   const deptLayerRef = useRef<any>(null);
   const commLayerRef = useRef<any>(null);
   const sectLayerRef = useRef<any>(null);
@@ -192,21 +193,7 @@ export default function MapComponent({
     if(tileRef.current)tileRef.current.remove();
     tileRef.current=L.tileLayer(isSat?TILE_SAT:TILE_PLAN,{maxZoom:20}).addTo(mapInst.current);
     // Remonter le cadastre au dessus
-    if(cadastreRef.current){cadastreRef.current.remove();cadastreRef.current=null;}
   },[isSat,ready]);
-
-  // ── Tuile cadastre ────────────────────────────────────────────────────────
-  useEffect(()=>{
-    if(!ready||!mapInst.current)return;
-    const L=(window as any).L;
-    const shouldShow=layers?.parcelles&&zoom>=Z_SECTION;
-    if(shouldShow&&!cadastreRef.current){
-      cadastreRef.current=L.tileLayer(TILE_CADASTRE,{opacity:isSat?0.6:0.55,maxZoom:20,zIndex:300}).addTo(mapInst.current);
-      markersRef.current.forEach(m=>m.bringToFront?.());
-    }else if(!shouldShow&&cadastreRef.current){
-      cadastreRef.current.remove();cadastreRef.current=null;
-    }
-  },[ready,layers?.parcelles,zoom,isSat]);
 
   // ── FlyTo center / target ─────────────────────────────────────────────────
   useEffect(()=>{
@@ -394,11 +381,11 @@ export default function MapComponent({
         const hasSale=dvf.length>0;
         const hasDpe=dpe.length>0;
         const key=`${feature.properties?.section}-${feature.properties?.numero}`;
-        if(hasOwner&&hasSale){patternKeys.set(key,"ml-both"); return{color:C_OWNER,weight:2,opacity:1,fillColor:"transparent",fillOpacity:0};}
-        if(hasOwner){patternKeys.set(key,"ml-owner"); return{color:C_OWNER,weight:2,opacity:1,fillColor:"transparent",fillOpacity:0};}
-        if(hasSale){patternKeys.set(key,"ml-sale"); return{color:C_SALE,weight:2,opacity:1,fillColor:"transparent",fillOpacity:0};}
-        if(hasDpe){return{color:dpeColor(dpe[0].classe_dpe||""),weight:1.5,opacity:0.9,fillColor:dpeColor(dpe[0].classe_dpe||""),fillOpacity:0.2};}
-        return{weight:0.4,opacity:0.12,fillOpacity:0,color:"#94A3B8"};
+        if(hasOwner&&hasSale){patternKeys.set(key,"ml-both"); return{color:"#1a1a1a",weight:1,opacity:0.5,fillColor:"transparent",fillOpacity:0};}
+        if(hasOwner){patternKeys.set(key,"ml-owner"); return{color:"#1a1a1a",weight:1,opacity:0.5,fillColor:"transparent",fillOpacity:0};}
+        if(hasSale){patternKeys.set(key,"ml-sale"); return{color:"#1a1a1a",weight:1,opacity:0.5,fillColor:"transparent",fillOpacity:0};}
+        if(hasDpe){return{color:"#1a1a1a",weight:1,opacity:0.5,fillColor:dpeColor(dpe[0].classe_dpe||""),fillOpacity:0.25};}
+        return{weight:0.6,opacity:0.3,fillOpacity:0,color:"#1a1a1a"};
       },
       onEachFeature:(feature:any,layer:any)=>{
         const coords=feature.geometry?.coordinates; if(!coords)return;
@@ -440,15 +427,16 @@ export default function MapComponent({
           }catch{}
         }
 
-        // Prix DVF
+        // Prix DVF — bulle blanche style Pappers Immo
         if(topSale?.prix_achat>0&&lrs?.ventes){
           try{
             const prix=topSale.prix_achat;
-            const label=prix>=1_000_000?`${(prix/1_000_000).toFixed(1).replace(/\.0$/,"").replace(".",",")} M€`:`${Math.round(prix/1000)}k€`;
+            const parts=prix.toLocaleString("fr-FR").split(/\s/);
+            const label=parts.join(" ")+" €";
             const pb=L.marker([clat,clng],{
               icon:L.divIcon({className:"",
-                html:`<div style="background:rgba(255,255,255,0.97);border:1px solid #e2e8f0;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;color:#0f172a;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.12);font-family:-apple-system,sans-serif;">${label}</div>`,
-                iconSize:[1,1],iconAnchor:[-4,16],
+                html:`<div style="background:rgba(255,255,255,0.96);border-radius:6px;padding:3px 9px;font-size:12px;font-weight:500;color:#1a1a1a;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.18),0 0 0 1px rgba(0,0,0,0.06);font-family:-apple-system,sans-serif;letter-spacing:-0.01em;">${label}</div>`,
+                iconSize:[1,1],iconAnchor:[-4,10],
               }),interactive:false,
             }).addTo(map);
             badgesRef.current.push(pb);
@@ -547,6 +535,48 @@ export default function MapComponent({
       `}</style>
       <div style={{position:"relative",width:"100%",height:"100%"}}>
         <div ref={mapRef} style={{width:"100%",height:"100%"}}/>
+
+        {/* Barre de recherche style Pappers — en haut au centre */}
+        <div style={{position:"absolute",top:12,left:"50%",transform:"translateX(-50%)",zIndex:1000,width:"min(520px,calc(100% - 200px))"}}>
+          <div style={{position:"relative"}}>
+            <svg style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:"#3B82F6",pointerEvents:"none"}} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input
+              value={searchVal}
+              onChange={e=>{
+                const v=e.target.value; setSearchVal(v);
+                clearTimeout(searchTimer.current);
+                if(v.length<2){setSearchResults([]);return;}
+                searchTimer.current=setTimeout(async()=>{
+                  try{
+                    const r=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(v)}&limit=5`);
+                    const d=await r.json();
+                    setSearchResults(d.features||[]);
+                  }catch{setSearchResults([]);}
+                },300);
+              }}
+              onKeyDown={e=>{if(e.key==="Escape"){setSearchVal("");setSearchResults([]);}}}
+              placeholder="Rechercher une adresse, une commune, une parcelle"
+              style={{width:"100%",padding:"11px 14px 11px 40px",borderRadius:10,border:"none",background:"#fff",boxShadow:"0 2px 16px rgba(0,0,0,0.15),0 0 0 1px rgba(0,0,0,0.06)",fontSize:14,color:"#1a1a1a",outline:"none",boxSizing:"border-box",fontFamily:"-apple-system,sans-serif"}}
+            />
+          </div>
+          {searchResults.length>0&&(
+            <div style={{marginTop:4,background:"#fff",borderRadius:8,boxShadow:"0 4px 20px rgba(0,0,0,0.15),0 0 0 1px rgba(0,0,0,0.06)",overflow:"hidden"}}>
+              {searchResults.map((f:any,i:number)=>(
+                <div key={i} onClick={()=>{
+                  const[lng,lat]=f.geometry.coordinates;
+                  mapInst.current?.flyTo([lat,lng],16,{animate:true,duration:1.2});
+                  setSearchVal(f.properties.label);
+                  setSearchResults([]);
+                }} style={{padding:"9px 14px",cursor:"pointer",fontSize:13,color:"#1a1a1a",borderBottom:i<searchResults.length-1?"1px solid #f0f0f0":"none",fontFamily:"-apple-system,sans-serif"}}
+                  onMouseOver={e=>(e.currentTarget.style.background="#f5f7ff")}
+                  onMouseOut={e=>(e.currentTarget.style.background="transparent")}>
+                  <span style={{fontWeight:500}}>{f.properties.name}</span>
+                  <span style={{color:"#888",marginLeft:6,fontSize:12}}>{f.properties.context}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Contrôles Plan/Satellite + Vue 3D */}
         <div style={{position:"absolute",top:12,left:12,zIndex:1000,display:"flex",gap:6}}>

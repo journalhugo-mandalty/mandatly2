@@ -1058,10 +1058,9 @@ export default function App() {
             {/* LEFT: calques + config + panier */}
             <div style={{width:230,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:C.card}}>
 
-              {/* Header Configurer la vue */}
-              <div style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,flexShrink:0,display:"flex",gap:6}}>
-                <button style={{flex:1,background:C.accent,color:dark?"#080808":"#fff",border:"none",borderRadius:6,padding:"6px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Configurer la vue</button>
-                <button style={{flex:1,background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",fontSize:10,fontWeight:600,cursor:"pointer"}}>Recherche avancée</button>
+              {/* Header */}
+              <div style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:"0.14em"}}>Configuration</div>
               </div>
 
               {/* Calques */}
