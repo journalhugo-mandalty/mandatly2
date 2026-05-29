@@ -582,6 +582,36 @@ export default function App() {
     setMatchLoading(false);
   }, []);
 
+  const compressPhoto = async (url: string): Promise<string | null> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength < 8000) return null;
+      const blobUrl = URL.createObjectURL(new Blob([buf]));
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(blobUrl);
+          const MAX = 800;
+          let w = img.naturalWidth, h = img.naturalHeight;
+          if (w > MAX || h > MAX) {
+            if (w >= h) { h = Math.round(h * MAX / w); w = MAX; }
+            else { w = Math.round(w * MAX / h); h = MAX; }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { resolve(null); return; }
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", 0.72).split(",")[1] || null);
+        };
+        img.onerror = () => { URL.revokeObjectURL(blobUrl); resolve(null); };
+        img.src = blobUrl;
+      });
+    } catch { return null; }
+  };
+
   const handleAnalyserAnnonce = useCallback(async () => {
     const f = analyserForm;
     if (!f.ville.trim() || !f.surface) return;
@@ -594,24 +624,12 @@ export default function App() {
       if (!feat) throw new Error("Ville introuvable — vérifiez le nom");
       const [lng, lat] = feat.geometry.coordinates as [number, number];
 
-      // Fetch photos depuis les URLs (côté navigateur)
-      const photoUrls = f.photoUrls.split(/[\n,]+/).map((u:string)=>u.trim()).filter(Boolean).slice(0, 5);
+      // Fetch + compresse photos côté navigateur (max 800px JPEG 72%)
+      const photoUrls = f.photoUrls.split(/[\n,]+/).map((u:string)=>u.trim()).filter(Boolean).slice(0, 3);
       const photos: string[] = [];
       for (const url of photoUrls) {
-        try {
-          const res = await fetch(url);
-          if (!res.ok) continue;
-          const buf = await res.arrayBuffer();
-          if (buf.byteLength < 8000) continue;
-          const bytes = new Uint8Array(buf);
-          let binary = "";
-          const CHUNK = 8192;
-          for (let i = 0; i < bytes.length; i += CHUNK) {
-            binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-          }
-          photos.push(btoa(binary));
-          if (photos.length >= 3) break;
-        } catch {}
+        const b64 = await compressPhoto(url);
+        if (b64 && b64.length > 5000) photos.push(b64);
       }
 
       const r = await fetch("/api/match-annonce", {
