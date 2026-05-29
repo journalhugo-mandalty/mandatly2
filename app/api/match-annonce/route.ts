@@ -802,11 +802,10 @@ export async function POST(req: NextRequest) {
           return { ...r, score: result.score, reason: result.reason };
         })
       );
-      // debug: expose scores temporairement
-      (descriptorUsed as any).__debug_scores = scored.map(s => ({ adresse: s.adresse, score: s.score, reason: s.reason, no_aerial: (s as any)._aerial_null }));
       scored.sort((a, b) => b.score - a.score);
       if (scored[0]?.score >= 52) { chosenDvf = scored[0]; visionScore = scored[0].score; visionReason = scored[0].reason; }
       else if (scored[0]?.score >= 35) { chosenDvf = scored[0]; visionScore = scored[0].score; visionReason = scored[0].reason; }
+      else if (scored[0]?.score >= 22) { chosenDvf = scored[0]; visionScore = scored[0].score; visionReason = scored[0].reason; }
       if (!chosenDvf) {
         scored.forEach((s: any) => {
           const c = candidates.find(x => x.adresse === s.adresse && x.lat === s.lat);
@@ -838,6 +837,7 @@ export async function POST(req: NextRequest) {
       : null;
     const isSurfaceFallback = visionScore === 0 && visionReason === "identification par surface uniquement";
     const lowConfidence = isSurfaceFallback || visionScore < 52;
+    const veryLowConfidence = !isSurfaceFallback && visionScore > 0 && visionScore < 35;
     return NextResponse.json({
       method: isSurfaceFallback ? "dvf_surface" : "dvf_vision",
       dvf_surface: chosenDvf.surface_bati,
@@ -849,6 +849,7 @@ export async function POST(req: NextRequest) {
       vision_score: isSurfaceFallback ? null : visionScore,
       vision_reason: isSurfaceFallback ? null : visionReason,
       low_confidence: lowConfidence,
+      very_low_confidence: veryLowConfidence,
       surface_warning: surfaceWarning,
       descriptor: descriptorUsed,
       pappers_immo: pappersBasic ? {

@@ -2898,7 +2898,8 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                     {analyserResult.method==="dvf"&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>DVF — haute fiabilité</span>}
                     {analyserResult.method?.startsWith("pappers")&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.green+"18",border:`1px solid ${C.green}35`,borderRadius:4,padding:"1px 6px"}}>Cadastre — fiable</span>}
                     {analyserResult.method==="dvf_vision"&&!analyserResult.low_confidence&&<span style={{fontSize:10,color:C.green,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — fiable</span>}
-                    {analyserResult.method==="dvf_vision"&&analyserResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                    {analyserResult.method==="dvf_vision"&&analyserResult.low_confidence&&!analyserResult.very_low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                    {analyserResult.method==="dvf_vision"&&analyserResult.very_low_confidence&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>Vision IA — similaire</span>}
                     {analyserResult.method==="dvf_surface"&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>Surface DVF — à confirmer</span>}
                   </div>
                   {analyserResult.method==="dvf_surface"&&(
@@ -3241,7 +3242,8 @@ td{padding:11px 12px;font-size:12px;color:#14213D}
                             {matchResult.method==="pappers_vision"&&!matchResult.low_confidence&&<span style={{fontSize:10,color:C.green,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:4,padding:"1px 6px"}}>Cadastre — fiable</span>}
                             {matchResult.method==="pappers_vision"&&matchResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Cadastre — à vérifier</span>}
                             {matchResult.method==="dvf_vision"&&!matchResult.low_confidence&&<span style={{fontSize:10,color:C.green,background:C.green+"15",border:`1px solid ${C.green}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — fiable</span>}
-                            {matchResult.method==="dvf_vision"&&matchResult.low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                            {matchResult.method==="dvf_vision"&&matchResult.low_confidence&&!matchResult.very_low_confidence&&<span style={{fontSize:10,color:C.amber,background:C.amber+"15",border:`1px solid ${C.amber}30`,borderRadius:4,padding:"1px 6px"}}>Vision IA — à vérifier</span>}
+                            {matchResult.method==="dvf_vision"&&matchResult.very_low_confidence&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>Vision IA — similaire</span>}
                             {matchResult.method==="dvf_surface"&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>Surface DVF — à confirmer</span>}
                           </div>
                           {/* Vue aérienne inline — confirmer visuellement que c'est le bon bien */}
