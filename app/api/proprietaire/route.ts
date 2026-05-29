@@ -187,8 +187,9 @@ async function tryVision(lat: string, lng: string): Promise<string | null> {
     });
     if (!cr.ok) return null;
     const cd = await cr.json();
-    const text = (cd.content?.[0]?.text || "").trim();
-    if (!text || text === "AUCUN" || text.length < 2 || text.length > 80) return null;
+    // Strip markdown (*, _) that Claude sometimes adds around the response
+    const text = (cd.content?.[0]?.text || "").trim().replace(/[*_]/g, "").trim();
+    if (!text || text.toUpperCase() === "AUCUN" || text.length < 2 || text.length > 80) return null;
     return text;
   } catch { return null; }
 }
@@ -345,6 +346,14 @@ export async function GET(req: NextRequest) {
       proprietaire_nom = visionName;
       proprietaire_source = "vision-ia";
     }
+  }
+
+  // Si le nom trouvé est exactement le nom de la commune → propriétaire public, on efface
+  const communeFromAddr = adresse.match(/\d{5}\s+([A-ZÀ-Ÿa-zà-ÿ\s-]+)/)?.[1]?.trim()?.toUpperCase() || "";
+  if (communeFromAddr && proprietaire_nom.toUpperCase() === communeFromAddr) {
+    proprietaire_nom = "";
+    proprietaire_prenom = "";
+    proprietaire_source = "cadastre";
   }
 
   if (!proprietaire_nom && parcelles.length > 0) proprietaire_source = "cadastre";
