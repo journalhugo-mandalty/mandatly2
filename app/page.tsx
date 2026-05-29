@@ -188,6 +188,7 @@ export default function App() {
   // Propriétaire lookup
   const [propData, setPropData] = useState<Record<string,any>>({});
   const [propLoading, setPropLoading] = useState<string|null>(null);
+  const [pappersProspLoading, setPappersProspLoading] = useState<string|null>(null);
   // Street View modal
   const [svModal, setSvModal] = useState<{lat:number;lng:number;adresse:string}|null>(null);
   // Sélection prospects pour envoi batch
@@ -260,7 +261,7 @@ export default function App() {
   const [radarLayers, setRadarLayers] = useState({ parcelles: true, ventes: false, proprietaires: true, dpe: true });
   const [radarParcelPanel, setRadarParcelPanel] = useState<{
     properties: any; centroid: [number,number]; matching: any[];
-    address: string|null; owner: any|null; ownerLoading: boolean;
+    address: string|null; owner: any|null; ownerLoading: boolean; pappersLoading?: boolean;
   }|null>(null);
   const [parcelTab, setParcelTab] = useState<"ventes"|"proprietaires"|"dpe">("ventes");
   const [radarBasket, setRadarBasket] = useState<Record<string,{prospect:any;liked:boolean;dateSent?:string}>>(() => {
@@ -1266,9 +1267,24 @@ export default function App() {
                             </div>
                           ):(
                             <div style={{padding:"14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8}}>
-                              <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Propriétaire non identifié via les données publiques.</div>
-                              <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>Consultez manuellement :</div>
-                              <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent(pp.address||"")}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:4,marginTop:6,fontSize:11,color:"#3B82F6",fontWeight:600,textDecoration:"none"}}>
+                              <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Propriétaire non identifié via les données publiques gratuites.</div>
+                              <button
+                                disabled={!!pp.pappersLoading}
+                                onClick={async()=>{
+                                  setRadarParcelPanel(prev=>prev?{...prev,pappersLoading:true}:prev);
+                                  try{
+                                    const lat=pp.centroid[0],lng=pp.centroid[1];
+                                    const own=await fetch(`/api/proprietaire?lat=${lat}&lng=${lng}&adresse=${encodeURIComponent(pp.address||"")}&pappers=1`).then(r=>r.json());
+                                    setRadarParcelPanel(prev=>prev?{...prev,owner:own,pappersLoading:false}:prev);
+                                  }catch{setRadarParcelPanel(prev=>prev?{...prev,pappersLoading:false}:prev);}
+                                }}
+                                style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",background:pp.pappersLoading?"#3B82F620":"#3B82F6",border:"none",borderRadius:6,color:"#fff",fontSize:11,fontWeight:700,cursor:pp.pappersLoading?"not-allowed":"pointer",marginBottom:8,width:"100%",justifyContent:"center"}}>
+                                {pp.pappersLoading?(
+                                  <><div style={{width:8,height:8,borderRadius:"50%",background:"#fff",animation:"pulse 1s infinite"}}/> Recherche Pappers…</>
+                                ):"Rechercher avec Pappers Immo (2 crédits)"}
+                              </button>
+                              <div style={{fontSize:10,color:C.muted,lineHeight:1.5,marginBottom:8}}>Ou consultez manuellement :</div>
+                              <a href={`https://immobilier.pappers.fr/?q=${encodeURIComponent(pp.address||"")}`} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:"#3B82F6",fontWeight:600,textDecoration:"none"}}>
                                 Pappers Immo <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                               </a>
                             </div>
@@ -2002,17 +2018,35 @@ export default function App() {
                           </>
                         ):(
                           <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                            <span style={{fontSize:11,color:C.muted}}>Propriétaire non identifié</span>
+                            <span style={{fontSize:11,color:C.muted}}>Non identifié via données publiques</span>
+                            {selProspect.lat&&selProspect.lng&&(
+                              <button
+                                disabled={pappersProspLoading===String(selProspect.id)}
+                                onClick={async()=>{
+                                  const key=String(selProspect.id);
+                                  setPappersProspLoading(key);
+                                  try{
+                                    const adrsQ=selProspect.adresse.replace(/\b\d{5}\b\s*/g,"").trim();
+                                    const q=adrsQ.toLowerCase().includes(selProspect.ville.toLowerCase())?adrsQ:`${adrsQ} ${selProspect.ville}`;
+                                    const d=await fetch(`/api/proprietaire?lat=${selProspect.lat}&lng=${selProspect.lng}&adresse=${encodeURIComponent(q)}&pappers=1`).then(r=>r.json());
+                                    if(d.proprietaire_nom){
+                                      setProspects(prev=>prev.map(x=>x.id===selProspect.id?{...x,proprietaire_nom:d.proprietaire_nom,proprietaire_prenom:d.proprietaire_prenom||"",civilite:d.civilite||"",proprietaire_source:d.proprietaire_source||""}:x));
+                                      setSelProspect((prev:any)=>prev?{...prev,proprietaire_nom:d.proprietaire_nom,proprietaire_prenom:d.proprietaire_prenom||"",civilite:d.civilite||"",proprietaire_source:d.proprietaire_source||""}:prev);
+                                    }
+                                    setPropData(x=>({...x,[key]:d}));
+                                  }catch{}
+                                  setPappersProspLoading(null);
+                                }}
+                                style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",background:pappersProspLoading===String(selProspect.id)?"#3B82F620":"#3B82F6",border:"none",borderRadius:5,color:"#fff",fontSize:10,fontWeight:700,cursor:pappersProspLoading===String(selProspect.id)?"not-allowed":"pointer",width:"fit-content"}}>
+                                {pappersProspLoading===String(selProspect.id)?"Recherche…":"Pappers Immo (2 crédits)"}
+                              </button>
+                            )}
                             <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                              {(propData[String(selProspect.id)]?.pagesBlanchesUrl||propData[String(selProspect.id)]?.annuaireUrl)&&(
-                                <>
-                                  {propData[String(selProspect.id)]?.pagesBlanchesUrl&&(
-                                    <a href={propData[String(selProspect.id)].pagesBlanchesUrl} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,textDecoration:"none",background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Pages Blanches →</a>
-                                  )}
-                                  {propData[String(selProspect.id)]?.annuaireUrl&&(
-                                    <a href={propData[String(selProspect.id)].annuaireUrl} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,textDecoration:"none",background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>118712 →</a>
-                                  )}
-                                </>
+                              {propData[String(selProspect.id)]?.pagesBlanchesUrl&&(
+                                <a href={propData[String(selProspect.id)].pagesBlanchesUrl} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,textDecoration:"none",background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>Pages Blanches →</a>
+                              )}
+                              {propData[String(selProspect.id)]?.annuaireUrl&&(
+                                <a href={propData[String(selProspect.id)].annuaireUrl} target="_blank" rel="noopener" style={{fontSize:10,color:C.blue,textDecoration:"none",background:C.card,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",cursor:"pointer"}}>118712 →</a>
                               )}
                             </div>
                           </div>

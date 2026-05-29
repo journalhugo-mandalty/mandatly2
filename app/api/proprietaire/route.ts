@@ -229,9 +229,10 @@ export async function GET(req: NextRequest) {
 
   if (!lat || !lng) return NextResponse.json({ error: "lat/lng requis" }, { status: 400 });
 
-  // ── Priorité absolue : Pappers Immo (Fichiers Fonciers DGFIP) ────────────
+  // ── Pappers Immo (opt-in uniquement — paramètre pappers=1 requis) ────────
   const pappersImmoKey = process.env.PAPPERS_IMMO_API_KEY || "";
-  if (pappersImmoKey) {
+  const usePappers = searchParams.get("pappers") === "1";
+  if (pappersImmoKey && usePappers) {
     const pappersResult = await pappersImmoBasic(lat, lng, pappersImmoKey);
     if (pappersResult) {
       const cpMatch = adresse.match(/\b(3[0-9]{4})\b/);
