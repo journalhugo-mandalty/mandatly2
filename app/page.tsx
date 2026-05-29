@@ -260,7 +260,7 @@ export default function App() {
     properties: any; centroid: [number,number]; matching: any[];
     address: string|null; owner: any|null; ownerLoading: boolean;
   }|null>(null);
-  const [parcelTab, setParcelTab] = useState<"ventes"|"proprietaires"|"dpe"|"batiments"|"occupants"|"urbanisme">("ventes");
+  const [parcelTab, setParcelTab] = useState<"ventes"|"proprietaires"|"dpe">("ventes");
   const [radarBasket, setRadarBasket] = useState<Record<string,{prospect:any;liked:boolean;dateSent?:string}>>(() => {
     if(typeof window==="undefined") return {};
     try{return JSON.parse(localStorage.getItem("m_radar_basket")||"{}");}catch{return {};}
@@ -1213,16 +1213,12 @@ export default function App() {
                       {/* Onglets style Pappers Immo */}
                       <div style={{display:"flex",gap:0,overflowX:"auto",marginLeft:-2,marginRight:-2,scrollbarWidth:"none"}}>
                         {([
-                          ["ventes",`Ventes (${dvfHits.length})`,false],
-                          ["proprietaires",`Propriétaires (${ownerName?1:0})`,false],
-                          ["dpe",`DPE (${dpeHits.length})`,false],
-                          ["batiments","Bâtiments",true],
-                          ["occupants","Occupants",true],
-                          ["urbanisme","Urbanisme",true],
-                        ] as [string,string,boolean][]).map(([id,lbl,locked])=>(
-                          <button key={id} onClick={()=>!locked&&setParcelTab(id as any)} style={{flexShrink:0,padding:"7px 8px",border:"none",borderBottom:parcelTab===id?`2px solid #3B82F6`:`2px solid transparent`,background:"none",color:locked?"rgba(255,255,255,0.2)":parcelTab===id?"#3B82F6":C.muted,fontSize:10,fontWeight:parcelTab===id?700:500,cursor:locked?"default":"pointer",transition:"all 0.12s",textAlign:"center",display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>
+                          ["ventes",`Ventes (${dvfHits.length})`],
+                          ["proprietaires",`Propriétaires (${ownerName?1:0})`],
+                          ["dpe",`DPE (${dpeHits.length})`],
+                        ] as [string,string][]).map(([id,lbl])=>(
+                          <button key={id} onClick={()=>setParcelTab(id as any)} style={{flexShrink:0,padding:"7px 8px",border:"none",borderBottom:parcelTab===id?`2px solid #3B82F6`:`2px solid transparent`,background:"none",color:parcelTab===id?"#3B82F6":C.muted,fontSize:10,fontWeight:parcelTab===id?700:500,cursor:"pointer",transition:"all 0.12s",textAlign:"center",whiteSpace:"nowrap"}}>
                             {lbl}
-                            {locked&&<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V11a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm3 8H9V6a3 3 0 0 1 6 0v3z"/></svg>}
                           </button>
                         ))}
                       </div>
