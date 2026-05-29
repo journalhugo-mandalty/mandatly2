@@ -20,8 +20,10 @@ type Props = {
   likedOverlay?: LikedPin[];
 };
 
-const TILE_PLAN = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image%2Fpng&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
-const TILE_SAT  = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+const TILE_LIGHT = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+const TILE_DARK  = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const TILE_SAT   = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+const TILE_OPTS  = {subdomains:"abcd",maxZoom:20} as const;
 
 const Z_REGION  = 5;
 const Z_DEPT    = 8;
@@ -171,7 +173,7 @@ export default function MapComponent({
     scr.onload=()=>{
       const L=(window as any).L;
       const map=L.map(mapRef.current,{center:[46.5,2.5],zoom:6,zoomControl:false,attributionControl:false});
-      tileRef.current=L.tileLayer(initSat?TILE_SAT:TILE_PLAN,{maxZoom:20}).addTo(map);
+      tileRef.current=L.tileLayer(initSat?TILE_SAT:(dark?TILE_DARK:TILE_LIGHT),TILE_OPTS).addTo(map);
       L.control.zoom({position:"bottomright"}).addTo(map);
       mapInst.current=map;
       // Clic carte → info parcelle au zoom parcel
@@ -203,9 +205,9 @@ export default function MapComponent({
     if(!ready||!mapInst.current)return;
     const L=(window as any).L;
     if(tileRef.current)tileRef.current.remove();
-    tileRef.current=L.tileLayer(isSat?TILE_SAT:TILE_PLAN,{maxZoom:20}).addTo(mapInst.current);
+    tileRef.current=L.tileLayer(isSat?TILE_SAT:(dark?TILE_DARK:TILE_LIGHT),TILE_OPTS).addTo(mapInst.current);
     // Remonter le cadastre au dessus
-  },[isSat,ready]);
+  },[isSat,ready,dark]);
 
   // ── FlyTo center / target ─────────────────────────────────────────────────
   useEffect(()=>{
