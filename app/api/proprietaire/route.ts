@@ -199,11 +199,11 @@ const PUBLIC_OWNER = /^(COMMUNE|COMMUNAUTE|DEPARTEMENT|REGION|ETAT|REPUBLIQUE|IN
 
 async function pappersImmoBasic(lat: string, lng: string, apiKey: string): Promise<{ nom: string; isEntity: boolean } | null> {
   try {
-    const url = `https://api-immobilier.pappers.fr/v1/parcelles?latitude=${lat}&longitude=${lng}&distance=20&bases=proprietaires&champs_supplementaires=proprietaires.personnes_physiques&par_page=3`;
+    const url = `https://api-immobilier.pappers.fr/v1/parcelles?latitude=${lat}&longitude=${lng}&distance=20&bases=proprietaires&champs_supplementaires=proprietaires.personnes_physiques&par_page=1`;
     const r = await fetch(url, { headers: { "api-key": apiKey }, signal: AbortSignal.timeout(10000) });
     if (!r.ok) return null;
     const data = await r.json();
-    // Parcourir les résultats pour trouver un propriétaire privé (ignorer voiries/communes)
+    // Filtrer les propriétaires publics (voiries, communes…)
     for (const p of (data.resultats || [])) {
       for (const rp of (p.proprietaires || [])) {
         const pps: any[] = rp.personnes_physiques || [];
