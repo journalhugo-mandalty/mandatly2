@@ -24,7 +24,7 @@ const TILE_SAT  = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSI
 const Z_REGION  = 5;
 const Z_DEPT    = 8;
 const Z_COMMUNE = 11;
-const Z_SECTION = 14;
+const Z_SECTION = 13;
 const Z_PARCEL  = 15;
 
 const C_OWNER = "#22C55E";   // vert  — propriétaire connu
@@ -81,48 +81,54 @@ function nearbyProspects(clat: number, clng: number, ps: Prospect[], km=0.18): P
   });
 }
 
-// ── Patterns SVG : vert (propriétaire), violet (vente), hachuré (les deux) ─────
-function injectPatterns(map: any) {
-  const pane=map.getPane?.("overlayPane"); if(!pane)return;
-  const svgEl=pane.querySelector("svg"); if(!svgEl||svgEl.querySelector("#ml-owner"))return;
+// ── Patterns SVG globaux (document.body) — survivent aux setStyle Leaflet ──────
+function injectGlobalPatterns() {
+  if(typeof document==="undefined"||document.getElementById("ml-patterns-svg"))return;
+  const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("id","ml-patterns-svg");
+  svg.style.cssText="position:absolute;width:0;height:0;pointer-events:none;overflow:hidden;";
   const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
-  const mkSolid=(id:string,col:string)=>{
+  const mk=(id:string,col:string,col2?:string)=>{
     const pat=document.createElementNS("http://www.w3.org/2000/svg","pattern");
-    pat.setAttribute("id",id);pat.setAttribute("patternUnits","userSpaceOnUse");pat.setAttribute("width","8");pat.setAttribute("height","8");
+    pat.setAttribute("id",id);pat.setAttribute("patternUnits","userSpaceOnUse");
+    pat.setAttribute("width","10");pat.setAttribute("height","10");
+    pat.setAttribute("patternTransform","rotate(45 0 0)");
     const bg=document.createElementNS("http://www.w3.org/2000/svg","rect");
-    bg.setAttribute("width","8");bg.setAttribute("height","8");bg.setAttribute("fill",col);bg.setAttribute("opacity","0.18");
-    const ln=document.createElementNS("http://www.w3.org/2000/svg","path");
-    ln.setAttribute("d","M-1,1 l2,-2 M0,8 l8,-8 M7,9 l2,-2");ln.setAttribute("stroke",col);ln.setAttribute("stroke-width","2");
-    pat.appendChild(bg);pat.appendChild(ln);return pat;
+    bg.setAttribute("width","10");bg.setAttribute("height","10");
+    bg.setAttribute("fill",col);bg.setAttribute("fill-opacity","0.22");
+    const l1=document.createElementNS("http://www.w3.org/2000/svg","line");
+    l1.setAttribute("x1","0");l1.setAttribute("y1","0");l1.setAttribute("x2","0");l1.setAttribute("y2","10");
+    l1.setAttribute("stroke",col);l1.setAttribute("stroke-width","5");
+    pat.appendChild(bg);pat.appendChild(l1);
+    if(col2){
+      const l2=document.createElementNS("http://www.w3.org/2000/svg","line");
+      l2.setAttribute("x1","5");l2.setAttribute("y1","0");l2.setAttribute("x2","5");l2.setAttribute("y2","10");
+      l2.setAttribute("stroke",col2);l2.setAttribute("stroke-width","4");
+      pat.appendChild(l2);
+    }
+    return pat;
   };
-  const mkBoth=(id:string)=>{
-    const pat=document.createElementNS("http://www.w3.org/2000/svg","pattern");
-    pat.setAttribute("id",id);pat.setAttribute("patternUnits","userSpaceOnUse");pat.setAttribute("width","12");pat.setAttribute("height","12");
-    const bg=document.createElementNS("http://www.w3.org/2000/svg","rect");
-    bg.setAttribute("width","12");bg.setAttribute("height","12");bg.setAttribute("fill",C_OWNER);bg.setAttribute("opacity","0.12");
-    const l1=document.createElementNS("http://www.w3.org/2000/svg","path");
-    l1.setAttribute("d","M-2,2 l4,-4 M0,12 l12,-12 M10,14 l4,-4");l1.setAttribute("stroke",C_OWNER);l1.setAttribute("stroke-width","2.5");
-    const l2=document.createElementNS("http://www.w3.org/2000/svg","path");
-    l2.setAttribute("d","M2,-2 l-4,4 M12,0 l-12,12 M14,10 l-4,4");l2.setAttribute("stroke",C_SALE);l2.setAttribute("stroke-width","2");l2.setAttribute("opacity","0.8");
-    pat.appendChild(bg);pat.appendChild(l1);pat.appendChild(l2);return pat;
-  };
-  defs.appendChild(mkSolid("ml-owner",C_OWNER));
-  defs.appendChild(mkSolid("ml-sale",C_SALE));
-  defs.appendChild(mkBoth("ml-both"));
-  svgEl.insertBefore(defs,svgEl.firstChild);
+  defs.appendChild(mk("ml-owner",C_OWNER));
+  defs.appendChild(mk("ml-sale",C_SALE));
+  defs.appendChild(mk("ml-both",C_OWNER,C_SALE));
+  svg.appendChild(defs);
+  document.body.appendChild(svg);
 }
 function applyPatterns(layer: any, getKey: (f:any)=>string) {
   layer.eachLayer((sub:any)=>{
     const k=getKey(sub.feature); if(!k)return;
     const el=sub.getElement?.(); if(!el)return;
-    el.setAttribute("fill",`url(#${k})`);el.setAttribute("fill-opacity","1");
+    el.setAttribute("fill",`url(#${k})`);
+    el.setAttribute("fill-opacity","1");
   });
 }
+
+const DEFAULT_LAYERS: LayerState = { parcelles: true, ventes: true, proprietaires: true, dpe: true };
 
 export default function MapComponent({
   prospects, onSelect, onParcelClick,
   center, dark=true, satellite:initSat=false,
-  flyToTarget, layers,
+  flyToTarget, layers=DEFAULT_LAYERS,
 }: Props) {
   const mapRef       = useRef<HTMLDivElement>(null);
   const mapInst      = useRef<any>(null);
@@ -150,6 +156,9 @@ export default function MapComponent({
   useEffect(()=>{prospectsRef.current=prospects;},[prospects]);
   useEffect(()=>{layersRef.current=layers;},[layers]);
   useEffect(()=>{onParcelRef.current=onParcelClick;},[onParcelClick]);
+
+  // ── Patterns globaux (une seule fois dès le montage) ─────────────────────
+  useEffect(()=>{injectGlobalPatterns();},[]);
 
   // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -395,6 +404,7 @@ export default function MapComponent({
         const matching=[...dvf,...dpe]; if(!matching.length)return;
         const hasOwner=matching.some(p=>p.proprietaire_nom);
         const hasSale=dvf.length>0;
+        const hasDpe=dpe.length>0;
         const{section,numero,contenance,code_insee}=feature.properties||{};
         const topOwner=matching.find(p=>p.proprietaire_nom);
         const topDpe=dpe[0];
@@ -454,12 +464,26 @@ export default function MapComponent({
           </div>`,
           {className:"mandatly-tooltip",sticky:false}
         );
-        layer.on("mouseover",()=>layer.setStyle({weight:3.5,fillOpacity:0.12}));
+        layer.on("mouseover",()=>{
+          const key=`${section}-${numero}`;
+          if(patternKeys.has(key)){
+            // Pattern parcel : ne jamais appeler setStyle (efface le fill url())
+            // Juste accentuer le contour directement en SVG
+            layer.getElement?.()?.setAttribute("stroke-width","3");
+          } else {
+            layer.setStyle({weight:2.5,fillOpacity:hasDpe?0.35:0.08});
+          }
+        });
         layer.on("mouseout",()=>{
           const key=`${section}-${numero}`;
           const pat=patternKeys.get(key);
-          if(pat)layer.setStyle({weight:2,fillOpacity:0});
-          else layer.setStyle({weight:0.4,fillOpacity:0});
+          if(pat){
+            layer.getElement?.()?.setAttribute("stroke-width","1");
+            // Ré-appliquer le pattern au cas où il aurait été écrasé
+            const el=layer.getElement?.(); if(el) el.setAttribute("fill",`url(#${pat})`);
+          } else {
+            layer.setStyle({weight:0.6,fillOpacity:hasDpe?0.25:0});
+          }
         });
         layer.on("click",(e:any)=>{
           (window as any).L.DomEvent.stopPropagation(e);
@@ -471,13 +495,14 @@ export default function MapComponent({
     markersRef.current.forEach(m=>m.bringToFront?.());
     badgesRef.current.forEach(m=>m.bringToFront?.());
 
-    // Appliquer les patterns SVG (vert / violet / hachuré)
-    const apply=()=>{
+    // Appliquer les patterns SVG (les patterns globaux sont déjà dans document.body)
+    const applyAll=()=>{
       if(!parcLayerRef.current)return;
-      injectPatterns(map);
       applyPatterns(parcLayerRef.current,(f:any)=>patternKeys.get(`${f?.properties?.section}-${f?.properties?.numero}`)||"");
     };
-    setTimeout(apply,80); setTimeout(apply,350);
+    setTimeout(applyAll,60);
+    setTimeout(applyAll,300);
+    setTimeout(applyAll,700);
   };
 
   // ── Master refresh ────────────────────────────────────────────────────────

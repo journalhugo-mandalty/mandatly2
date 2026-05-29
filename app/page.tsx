@@ -132,6 +132,7 @@ export default function App() {
   const [dvfLoading, setDvfLoading] = useState(false);
   const [dvfError, setDvfError] = useState("");
   const [mapCenter, setMapCenter] = useState<[number,number]>([44.837, -0.579]);
+  const [prospLayers, setProspLayers] = useState({ parcelles: true, ventes: false, proprietaires: true, dpe: true });
   const [selProspect, setSelProspect] = useState<Prospect|null>(null);
   const [mapFlyTo, setMapFlyTo] = useState<{lat:number;lng:number;zoom:number;key:any}|null>(null);
   const [acheteurs, setAcheteurs] = useState<Acheteur[]>(()=>{
@@ -1805,8 +1806,35 @@ export default function App() {
                   center={mapCenter}
                   flyToTarget={mapFlyTo ?? undefined}
                   dark={dark}
+                  layers={prospLayers}
                 />
               </Suspense>
+              {/* Calques prospection avec œil */}
+              <div style={{position:"absolute",top:72,right:12,zIndex:1000,background:"rgba(8,10,18,0.93)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:10,padding:"8px 12px",backdropFilter:"blur(10px)",minWidth:148}}>
+                <div style={{fontSize:8,fontWeight:700,color:"rgba(255,255,255,0.3)",textTransform:"uppercase",letterSpacing:"0.14em",marginBottom:7}}>Calques</div>
+                {([
+                  {key:"parcelles" as const,label:"Parcelles",col:"#94A3B8"},
+                  {key:"proprietaires" as const,label:"Propriétaires",col:"#22C55E"},
+                  {key:"dpe" as const,label:"DPE récents",col:"#F97316"},
+                ] as const).map(l=>{
+                  const on=prospLayers[l.key];
+                  return(
+                    <div key={l.key} style={{display:"flex",alignItems:"center",gap:7,padding:"4px 0",cursor:"pointer",borderBottom:"1px solid rgba(255,255,255,0.04)"}}
+                      onClick={()=>setProspLayers(prev=>({...prev,[l.key]:!prev[l.key]}))}>
+                      <svg width="11" height="11" viewBox="0 0 11 11" style={{flexShrink:0,opacity:on?1:0.2,transition:"opacity 0.15s"}}>
+                        <path d="M5.5 1 L10 5.5 L5.5 10 L1 5.5 Z" fill={l.col}/>
+                      </svg>
+                      <div style={{flex:1,fontSize:10,color:on?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.3)",transition:"color 0.15s"}}>{l.label}</div>
+                      <div style={{color:on?"rgba(255,255,255,0.4)":"rgba(255,255,255,0.15)",flexShrink:0}}>
+                        {on
+                          ?<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                          :<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                        }
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
               {/* Stats overlay */}
               <div style={{position:"absolute",top:12,left:12,background:dark?"rgba(8,8,8,0.92)":"rgba(255,255,255,0.94)",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",backdropFilter:"blur(10px)",zIndex:10}}>
                 {dvfStats?(
