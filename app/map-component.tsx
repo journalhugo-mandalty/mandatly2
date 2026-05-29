@@ -20,10 +20,9 @@ type Props = {
   likedOverlay?: LikedPin[];
 };
 
-const TILE_LIGHT = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-const TILE_DARK  = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const TILE_SAT   = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
-const TILE_OPTS  = {subdomains:"abcd",maxZoom:20} as const;
+const TILE_PLAN = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+const TILE_SAT  = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+const TILE_OPTS = {subdomains:"abcd",maxZoom:20} as const;
 
 const Z_REGION  = 5;
 const Z_DEPT    = 8;
@@ -173,7 +172,7 @@ export default function MapComponent({
     scr.onload=()=>{
       const L=(window as any).L;
       const map=L.map(mapRef.current,{center:[46.5,2.5],zoom:6,zoomControl:false,attributionControl:false});
-      tileRef.current=L.tileLayer(initSat?TILE_SAT:(dark?TILE_DARK:TILE_LIGHT),TILE_OPTS).addTo(map);
+      tileRef.current=L.tileLayer(initSat?TILE_SAT:TILE_PLAN,TILE_OPTS).addTo(map);
       L.control.zoom({position:"bottomright"}).addTo(map);
       mapInst.current=map;
       // Clic carte → info parcelle au zoom parcel
@@ -205,9 +204,9 @@ export default function MapComponent({
     if(!ready||!mapInst.current)return;
     const L=(window as any).L;
     if(tileRef.current)tileRef.current.remove();
-    tileRef.current=L.tileLayer(isSat?TILE_SAT:(dark?TILE_DARK:TILE_LIGHT),TILE_OPTS).addTo(mapInst.current);
+    tileRef.current=L.tileLayer(isSat?TILE_SAT:TILE_PLAN,TILE_OPTS).addTo(mapInst.current);
     // Remonter le cadastre au dessus
-  },[isSat,ready,dark]);
+  },[isSat,ready]);
 
   // ── FlyTo center / target ─────────────────────────────────────────────────
   useEffect(()=>{
@@ -381,10 +380,55 @@ export default function MapComponent({
     }).addTo(map);
   };
 
+  // ── Sections cadastrales (feuilles) — niveau entre commune et parcelle ──────
+  const renderSections=async()=>{
+    const map=mapInst.current; if(!map)return;
+    const L=(window as any).L;
+    const b=map.getBounds();
+    const bbox=`${b.getSouth().toFixed(6)},${b.getWest().toFixed(6)},${b.getNorth().toFixed(6)},${b.getEast().toFixed(6)}`;
+    let data:any;
+    try{
+      const r=await fetch(`https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:feuille&SRSNAME=EPSG:4326&BBOX=${bbox}&OUTPUTFORMAT=application/json&COUNT=200`,{signal:AbortSignal.timeout(12000)});
+      if(!r.ok)return; data=await r.json();
+    }catch{return;}
+    if(!data?.features?.length)return;
+    if(sectLayerRef.current){sectLayerRef.current.remove();sectLayerRef.current=null;}
+    const sectionLabels:any[]=[];
+    sectLayerRef.current=L.geoJSON(data,{
+      style:()=>({color:"#334155",weight:1.8,fillColor:"#3B82F6",fillOpacity:0.07,opacity:0.6}),
+      onEachFeature:(f:any,layer:any)=>{
+        const sec=(f.properties?.section||f.properties?.idu?.slice(-2)||"").toUpperCase();
+        const nom=f.properties?.nom_com||f.properties?.commune||"";
+        layer.bindTooltip(`<div style="font-family:-apple-system,sans-serif;font-size:13px;font-weight:700;color:#fff;">Section ${sec}</div>${nom?`<div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:1px;">${nom}</div>`:""}`,{className:"mandatly-tooltip",sticky:false});
+        layer.on("mouseover",()=>layer.setStyle({fillOpacity:0.2,weight:2.5,color:"#3B82F6"}));
+        layer.on("mouseout",()=>layer.setStyle({color:"#334155",weight:1.8,fillColor:"#3B82F6",fillOpacity:0.07,opacity:0.6}));
+        layer.on("click",()=>{
+          try{map.fitBounds(layer.getBounds(),{maxZoom:Z_PARCEL+1,padding:[20,20],animate:true,duration:0.7});}catch{}
+        });
+        // Label centré
+        try{
+          const coords=f.geometry?.coordinates;
+          if(coords&&sec){
+            const[clat,clng]=centroidOf(coords);
+            const lbl=L.marker([clat,clng],{
+              icon:L.divIcon({className:"",
+                html:`<div style="font-size:13px;font-weight:700;color:#334155;font-family:-apple-system,sans-serif;text-shadow:0 0 3px #fff,0 0 6px #fff;pointer-events:none;white-space:nowrap;">${sec}</div>`,
+                iconSize:[1,1],iconAnchor:[0,0],
+              }),interactive:false,zIndexOffset:-100,
+            }).addTo(map);
+            sectionLabels.push(lbl);
+          }
+        }catch{}
+      },
+    }).addTo(map);
+    // Stocker les labels pour cleanup
+    (sectLayerRef.current as any)._sectionLabels=sectionLabels;
+  };
+
   // ── Parcelles colorées (vert=propriétaire / violet=vente / hachuré=les deux) ──
   const renderParcels=async()=>{
     const map=mapInst.current;
-    if(!map||!layersRef.current?.parcelles||map.getZoom()<Z_SECTION){
+    if(!map||!layersRef.current?.parcelles||map.getZoom()<Z_PARCEL){
       if(parcLayerRef.current){parcLayerRef.current.remove();parcLayerRef.current=null;}
       badgesRef.current.forEach(m=>m.remove());badgesRef.current=[];
       return;
@@ -528,30 +572,49 @@ export default function MapComponent({
   };
 
   // ── Master refresh ────────────────────────────────────────────────────────
+  const clearSect=()=>{
+    if(sectLayerRef.current){
+      ((sectLayerRef.current as any)._sectionLabels||[]).forEach((l:any)=>l.remove());
+      sectLayerRef.current.remove();sectLayerRef.current=null;
+    }
+  };
   const refresh=async()=>{
     const map=mapInst.current; if(!map||(window as any).L===undefined)return;
     const z=map.getZoom();
-    if(z>=Z_SECTION){
+    if(z>=Z_PARCEL){
+      // Niveau parcelles individuelles
       if(deptLayerRef.current){deptLayerRef.current.remove();deptLayerRef.current=null;}
       if(commLayerRef.current){commLayerRef.current.remove();commLayerRef.current=null;}
-      if(sectLayerRef.current){sectLayerRef.current.remove();sectLayerRef.current=null;}
+      clearSect();
       await renderParcels();
+    } else if(z>=Z_SECTION){
+      // Niveau sections cadastrales
+      if(deptLayerRef.current){deptLayerRef.current.remove();deptLayerRef.current=null;}
+      if(commLayerRef.current){commLayerRef.current.remove();commLayerRef.current=null;}
+      if(parcLayerRef.current){parcLayerRef.current.remove();parcLayerRef.current=null;}
+      badgesRef.current.forEach(m=>m.remove());badgesRef.current=[];
+      await renderSections();
     } else if(z>=Z_COMMUNE){
+      // Niveau communes
       if(deptLayerRef.current){deptLayerRef.current.remove();deptLayerRef.current=null;}
       if(parcLayerRef.current){parcLayerRef.current.remove();parcLayerRef.current=null;}
       badgesRef.current.forEach(m=>m.remove());badgesRef.current=[];
-      if(sectLayerRef.current){sectLayerRef.current.remove();sectLayerRef.current=null;}
+      clearSect();
       await renderCommunes();
     } else if(z>=Z_DEPT){
+      // Niveau départements
       if(commLayerRef.current){commLayerRef.current.remove();commLayerRef.current=null;}
       if(parcLayerRef.current){parcLayerRef.current.remove();parcLayerRef.current=null;}
       badgesRef.current.forEach(m=>m.remove());badgesRef.current=[];
+      clearSect();
       await renderDepts();
     } else {
+      // Niveau régions
       if(deptLayerRef.current){deptLayerRef.current.remove();deptLayerRef.current=null;}
       if(commLayerRef.current){commLayerRef.current.remove();commLayerRef.current=null;}
       if(parcLayerRef.current){parcLayerRef.current.remove();parcLayerRef.current=null;}
       badgesRef.current.forEach(m=>m.remove());badgesRef.current=[];
+      clearSect();
       await renderRegions();
     }
   };
@@ -640,7 +703,7 @@ export default function MapComponent({
 
         {/* Indicateur niveau */}
         <div style={{position:"absolute",bottom:40,right:48,zIndex:1000,background:"rgba(8,10,18,0.78)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:6,padding:"3px 8px",fontSize:9,color:"rgba(255,255,255,0.45)",fontWeight:700,backdropFilter:"blur(6px)",letterSpacing:"0.07em"}}>
-          {zoom<Z_DEPT?"RÉGIONS":zoom<Z_COMMUNE?"DÉPARTEMENTS":zoom<Z_SECTION?"COMMUNES":"PARCELLES"}
+          {zoom<Z_DEPT?"RÉGIONS":zoom<Z_COMMUNE?"DÉPARTEMENTS":zoom<Z_SECTION?"COMMUNES":zoom<Z_PARCEL?"SECTIONS":"PARCELLES"}
         </div>
 
         {/* Légende */}
