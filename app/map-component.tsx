@@ -374,7 +374,11 @@ export default function MapComponent({
         layer.on("mouseover",()=>layer.setStyle({weight:3,fillOpacity:0.28}));
         layer.on("mouseout",()=>layer.setStyle(getHeatStyle(f,ps)||areaStyle(f)));
         layer.on("click",()=>{
-          try{map.fitBounds(layer.getBounds(),{padding:[30,30],animate:true,duration:0.8});}catch{}
+          try{
+            const bounds=layer.getBounds();
+            const z=Math.max(map.getBoundsZoom(bounds,false,[30,30])||0,Z_SECTION);
+            map.flyTo(bounds.getCenter(),z,{animate:true,duration:0.7});
+          }catch{}
         });
       },
     }).addTo(map);
@@ -384,44 +388,56 @@ export default function MapComponent({
   const renderSections=async()=>{
     const map=mapInst.current; if(!map)return;
     const L=(window as any).L;
+    // Cleanup complet (layer + labels)
+    if(sectLayerRef.current){
+      ((sectLayerRef.current as any)._sectionLabels||[]).forEach((l:any)=>l.remove());
+      sectLayerRef.current.remove();sectLayerRef.current=null;
+    }
     const b=map.getBounds();
     const bbox=`${b.getSouth().toFixed(6)},${b.getWest().toFixed(6)},${b.getNorth().toFixed(6)},${b.getEast().toFixed(6)}`;
     let data:any;
     try{
-      const r=await fetch(`https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:feuille&SRSNAME=EPSG:4326&BBOX=${bbox}&OUTPUTFORMAT=application/json&COUNT=200`,{signal:AbortSignal.timeout(12000)});
+      const r=await fetch(`https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TypeName=CADASTRALPARCELS.PARCELLAIRE_EXPRESS:feuille&SRSNAME=EPSG:4326&BBOX=${bbox}&OUTPUTFORMAT=application/json&COUNT=300`,{signal:AbortSignal.timeout(12000)});
       if(!r.ok)return; data=await r.json();
     }catch{return;}
     if(!data?.features?.length)return;
-    if(sectLayerRef.current){sectLayerRef.current.remove();sectLayerRef.current=null;}
     const sectionLabels:any[]=[];
+    const BASE_STYLE={color:"#1E3A5F",weight:2,fillColor:"#3B82F6",fillOpacity:0.14,opacity:0.8};
+    const HOVER_STYLE={color:"#1E3A5F",weight:2.5,fillColor:"#3B82F6",fillOpacity:0.30,opacity:1};
     sectLayerRef.current=L.geoJSON(data,{
-      style:()=>({color:"#334155",weight:1.8,fillColor:"#3B82F6",fillOpacity:0.07,opacity:0.6}),
+      style:()=>({...BASE_STYLE}),
       onEachFeature:(f:any,layer:any)=>{
-        const sec=(f.properties?.section||f.properties?.idu?.slice(-2)||"").toUpperCase();
-        const nom=f.properties?.nom_com||f.properties?.commune||"";
-        layer.bindTooltip(`<div style="font-family:-apple-system,sans-serif;font-size:13px;font-weight:700;color:#fff;">Section ${sec}</div>${nom?`<div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:1px;">${nom}</div>`:""}`,{className:"mandatly-tooltip",sticky:false});
-        layer.on("mouseover",()=>layer.setStyle({fillOpacity:0.2,weight:2.5,color:"#3B82F6"}));
-        layer.on("mouseout",()=>layer.setStyle({color:"#334155",weight:1.8,fillColor:"#3B82F6",fillOpacity:0.07,opacity:0.6}));
+        const sec=(f.properties?.section||"").toUpperCase();
+        const nom=f.properties?.nom_com||"";
+        layer.bindTooltip(
+          `<div style="font-family:-apple-system,sans-serif;font-size:13px;font-weight:700;color:#fff;">Section ${sec||"?"}</div>${nom?`<div style="font-size:11px;color:rgba(255,255,255,0.55);">${nom}</div>`:""}`,
+          {className:"mandatly-tooltip",sticky:false,direction:"top"}
+        );
+        layer.on("mouseover",()=>layer.setStyle(HOVER_STYLE));
+        layer.on("mouseout",()=>layer.setStyle(BASE_STYLE));
         layer.on("click",()=>{
-          try{map.fitBounds(layer.getBounds(),{maxZoom:Z_PARCEL+1,padding:[20,20],animate:true,duration:0.7});}catch{}
+          try{
+            const bounds=layer.getBounds();
+            const z=Math.max(map.getBoundsZoom(bounds,false,[20,20])||0,Z_PARCEL);
+            map.flyTo(bounds.getCenter(),z,{animate:true,duration:0.7});
+          }catch{}
         });
-        // Label centré
+        // Label centré dans la section
         try{
           const coords=f.geometry?.coordinates;
           if(coords&&sec){
             const[clat,clng]=centroidOf(coords);
             const lbl=L.marker([clat,clng],{
               icon:L.divIcon({className:"",
-                html:`<div style="font-size:13px;font-weight:700;color:#334155;font-family:-apple-system,sans-serif;text-shadow:0 0 3px #fff,0 0 6px #fff;pointer-events:none;white-space:nowrap;">${sec}</div>`,
-                iconSize:[1,1],iconAnchor:[0,0],
-              }),interactive:false,zIndexOffset:-100,
+                html:`<div style="font-size:12px;font-weight:800;color:#1E3A5F;font-family:-apple-system,sans-serif;background:rgba(255,255,255,0.85);padding:2px 6px;border-radius:4px;pointer-events:none;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.15);">${sec}</div>`,
+                iconSize:[1,1],iconAnchor:[0,8],
+              }),interactive:false,zIndexOffset:50,
             }).addTo(map);
             sectionLabels.push(lbl);
           }
         }catch{}
       },
     }).addTo(map);
-    // Stocker les labels pour cleanup
     (sectLayerRef.current as any)._sectionLabels=sectionLabels;
   };
 
