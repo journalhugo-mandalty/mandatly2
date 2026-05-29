@@ -796,12 +796,14 @@ export async function POST(req: NextRequest) {
             getIGNAerial(r.lat, r.lng, 130),
             getStreetView(r.lat, r.lng, googleKey),
           ]);
-          if (!aerialB64) return { ...r, score: 0, reason: "pas de satellite" };
+          if (!aerialB64) return { ...r, score: 0, reason: "pas de satellite", _aerial_null: true };
           if (!descriptor) return { ...r, score: 30, reason: "descriptif indisponible" };
           const result = await scoreCandidateVision(descriptor, aerialB64, streetB64, r.adresse, anthropicKey);
           return { ...r, score: result.score, reason: result.reason };
         })
       );
+      // debug: expose scores temporairement
+      (descriptorUsed as any).__debug_scores = scored.map(s => ({ adresse: s.adresse, score: s.score, reason: s.reason, no_aerial: (s as any)._aerial_null }));
       scored.sort((a, b) => b.score - a.score);
       if (scored[0]?.score >= 52) { chosenDvf = scored[0]; visionScore = scored[0].score; visionReason = scored[0].reason; }
       else if (scored[0]?.score >= 35) { chosenDvf = scored[0]; visionScore = scored[0].score; visionReason = scored[0].reason; }
